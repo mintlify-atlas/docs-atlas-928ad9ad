@@ -1,0 +1,203 @@
+---
+title: "Performance tuning for TUIC"
+description: "Optimize TUIC throughput and latency by tuning congestion control, QUIC transport parameters, OS-level offloads, and allocator settings."
+---
+
+TUIC exposes a rich set of knobs for squeezing out maximum throughput and minimum latency. This page walks through every layer of the stack — from the congestion control algorithm down to the memory allocator — so you know which lever to pull for your workload.
+
+## Congestion control
+
+TUIC supports four congestion controllers, configured under `[quic.congestion_control]`. The default is `bbr`.
+
+| Controller | Config value | Best for |
+|---|---|---|
+| BBR (v1) | `bbr` | General use; good on lossy or high-latency links |
+| BBR3 | `bbr3` | High-throughput, low-latency links; fork-specific feature |
+| CUBIC | `cubic` | Interoperability with legacy networks |
+| NewReno | `new_reno` | Minimal CPU overhead; conservative backoff |
+
+<Note>
+BBR3 is available only in this fork. It requires the custom quinn branch bundled with tuic. On most modern hosts it achieves higher bandwidth with lower latency than BBR v1.
+</Note>
+
+```toml
+[quic.congestion_control]
+# Options: bbr, bbr3, cubic, new_reno
+controller = "bbr"
+
+# Initial congestion window in bytes (default 1 MiB)
+initial_window = 1048576
+```
+
+**When to use each algorithm:**
+
+- **`bbr`** — The safe default. Works well over commodity internet, VPS links, and paths with moderate jitter.
+- **`bbr3`** — Prefer on dedicated or high-bandwidth links (10 Gbps+), or wherever BBR v1 under-utilizes bandwidth. Only available in this fork's quinn branch.
+- **`cubic`** — Use when connecting through equipment that drops ECN-marked packets or that expect traditional loss-based signals.
+- **`new_reno`** — Use for embedded or resource-constrained environments where CPU is the bottleneck, not bandwidth.
+
+### Initial congestion window
+
+`initial_window` sets the congestion window in bytes at the start of a new connection before any RTT samples arrive. The default is 1 MiB (1,048,576 bytes). Increasing this value can reduce the slow-start phase on high-bandwidth, low-latency paths:
+
+```toml
+[quic.congestion_control]
+controller = "bbr"
+initial_window = 4194304  # 4 MiB for fast paths
+```
+
+## QUIC transport parameters
+
+These settings live in the `[quic]` section of `config.toml`.
+
+```toml
+[quic]
+# Initial UDP payload size before PMTU discovery completes
+initial_mtu = 1200
+
+# Minimum MTU the network is guaranteed to support (must be >= 1200)
+min_mtu = 1200
+
+# Enable Generic Segmentation Offload (Linux only)
+gso = true
+
+# Enable Path MTU Discovery
+pmtu = true
+
+# Max unacknowledged bytes TUIC sends to the peer (per connection)
+send_window = 16777216   # 16 MiB
+
+# Max unacknowledged bytes per stream the peer may send to TUIC
+receive_window = 8388608  # 8 MiB
+
+# Drop idle QUIC connections after this duration
+max_idle_time = "30s"
+```
+
+### MTU settings
+
+**`initial_mtu`** is the starting UDP payload size TUIC uses before PMTU discovery finishes. The QUIC specification requires a minimum of 1200 bytes. Raising this value on paths where you know the MTU is at least 1500 (Ethernet) skips unnecessary fragmentation from the first packet.
+
+**`min_mtu`** is the floor that PMTU discovery will not go below. It must be between 1200 and `initial_mtu`.
+
+```toml
+[quic]
+# Ethernet path: start at full frame size
+initial_mtu = 1400
+min_mtu = 1200
+```
+
+### GSO (Generic Segmentation Offload)
+
+`gso = true` lets the kernel batch multiple QUIC UDP datagrams into a single system call, reducing per-packet CPU overhead. Enable this on any Linux host. It has no effect on macOS, Windows, or FreeBSD — TUIC ignores it silently on those platforms.
+
+<Tip>
+GSO provides the greatest benefit under high packet-per-second loads (> 100 k pps). On lightly loaded servers the difference is negligible.
+</Tip>
+
+### PMTU discovery
+
+`pmtu = true` enables Path MTU Discovery, allowing TUIC to probe and use a larger datagram size than `initial_mtu` when the path supports it. This is particularly effective on VPN or tunnel paths where the actual MTU differs from the default 1200.
+
+Disable PMTU only if your network drops ICMP "Fragmentation Needed" messages (some firewalls do), which would cause discovery to fail and stall connections.
+
+### Send and receive windows
+
+`send_window` and `receive_window` control the per-connection and per-stream flow control limits. The defaults (16 MiB send, 8 MiB receive) are suitable for most deployments. Raise them for bulk-transfer workloads:
+
+```toml
+[quic]
+send_window    = 33554432  # 32 MiB — good for >1 Gbps bulk transfers
+receive_window = 16777216  # 16 MiB
+```
+
+Lowering these values reduces memory usage when serving many simultaneous low-bandwidth clients.
+
+### Max idle time
+
+`max_idle_time` closes connections that have sent no data for the given duration. The default is 30 seconds.
+
+- **Increase** for clients on mobile or flaky networks that may pause for longer periods without dropping.
+- **Decrease** to release resources faster on high-churn servers.
+
+```toml
+[quic]
+max_idle_time = "60s"  # More lenient for mobile clients
+```
+
+## Allocator: JEMalloc
+
+This fork compiles with JEMalloc as the global allocator. JEMalloc reduces fragmentation and contention under the concurrent workloads typical of a proxy server. No configuration is required — it is active automatically on Linux and macOS builds.
+
+The improvement is most visible when `max_concurrent_streams` is high and many streams are opened and closed rapidly. Expect 10–30% lower resident memory compared to the system allocator under sustained load.
+
+## Crypto: AWS-LC-RS
+
+This fork uses the `aws-lc-rs` crate as the TLS 1.3 cryptographic provider instead of `ring`. AWS-LC-RS uses hardware acceleration (AES-NI, AVX2, ARMv8 Crypto Extensions) for symmetric ciphers and benefits from Amazon's continuous performance work on the underlying BoringSSL-derived library.
+
+No configuration is needed. The provider is selected at compile time and is faster than `ring` on x86-64 and AArch64 for AES-GCM workloads.
+
+## Concurrent streams
+
+This fork applies a more aggressive `max_concurrent_streams` strategy than the upstream. QUIC's stream multiplexing means many requests can be in flight simultaneously without head-of-line blocking. More concurrent streams reduces queuing latency when a burst of TUIC tasks arrives at the same time.
+
+The value is set internally and does not require configuration, but it interacts with `send_window` and `receive_window`. If you raise those windows significantly, the server can sustain the additional stream count without per-stream stalls.
+
+## Client-side settings
+
+On the client, two settings have the largest impact on connection resilience and latency:
+
+```toml
+[relay]
+# "loop" — reconnects automatically after any disconnection
+startup_mode = "loop"
+
+# Keepalive interval; prevents idle timeout on the server
+heartbeat = "10s"
+```
+
+**`startup_mode`** controls what the client does at startup and after a disconnect:
+
+| Value | Behavior |
+|---|---|
+| `lazy` (default) | Connect on first proxy request |
+| `eager` | Connect immediately at startup |
+| `loop` | Reconnect continuously after any failure |
+
+Use `loop` in production to ensure the local SOCKS5 listener is always backed by an active QUIC connection.
+
+**`heartbeat`** sends a TUIC heartbeat frame every N seconds to keep the connection alive through NAT mappings and prevent the server from closing idle connections. Set it to a value shorter than the server's `max_idle_time`.
+
+## Complete tuning example
+
+<CodeGroup>
+
+```toml server (high-throughput)
+[quic]
+initial_mtu  = 1400
+min_mtu      = 1200
+gso          = true
+pmtu         = true
+send_window  = 33554432  # 32 MiB
+receive_window = 16777216  # 16 MiB
+max_idle_time = "60s"
+
+[quic.congestion_control]
+controller     = "bbr3"
+initial_window = 4194304  # 4 MiB
+```
+
+```toml client (resilient)
+[relay]
+startup_mode = "loop"
+heartbeat    = "10s"
+send_window  = 33554432
+receive_window = 16777216
+initial_mtu  = 1400
+min_mtu      = 1200
+gso          = true
+pmtu         = true
+congestion_control = "bbr3"
+```
+
+</CodeGroup>

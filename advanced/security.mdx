@@ -1,0 +1,258 @@
+---
+title: "Security hardening for TUIC"
+description: "Protect your TUIC deployment with address filtering, TLS best practices, zero-RTT tradeoffs, ACL rules, authentication, and API hardening."
+---
+
+TUIC ships with sensible security defaults, but a production deployment benefits from explicit hardening at every layer. This page explains what each protection does, why it matters, and how to configure it correctly.
+
+## Default protections
+
+Two experimental flags are enabled by default to prevent the server from being used as a pivot for attacks against the local host or private network:
+
+```toml
+[experimental]
+# Block connections to 127.0.0.1, ::1 when no ACL rule explicitly allows them
+drop_loopback = true
+
+# Block connections to RFC 1918 / link-local ranges when no ACL rule allows them
+drop_private  = true
+```
+
+### `drop_loopback`
+
+When `true`, any proxy request targeting a loopback address (`127.0.0.1`, `::1`, `localhost`) is dropped unless an ACL rule explicitly matches and permits it. This prevents SSRF-style attacks where a remote client uses your TUIC server to reach services that only listen on the loopback interface — databases, admin panels, sidecar services, and so on.
+
+<Warning>
+Setting `drop_loopback = false` opens your server to SSRF attacks if any loopback service is not independently authenticated. Only disable it when you have explicit ACL rules that allow only the loopback destinations you intend to expose.
+</Warning>
+
+### `drop_private`
+
+When `true`, connections to private and link-local IP ranges are blocked by default:
+
+| Range | Description |
+|---|---|
+| `10.0.0.0/8` | RFC 1918 class A |
+| `172.16.0.0/12` | RFC 1918 class B |
+| `192.168.0.0/16` | RFC 1918 class C |
+| `169.254.0.0/16` | IPv4 link-local |
+| `fc00::/7` | IPv6 unique local |
+| `fe80::/10` | IPv6 link-local |
+
+This prevents users from reaching other machines on the server's LAN segment. Disable it only when you intentionally want to proxy into your private network, and back it up with granular ACL rules.
+
+## ACL rules for destination filtering
+
+ACL rules give you fine-grained control over what destinations TUIC will proxy to. Rules are evaluated in order; the first match wins. Use `drop` outbound to block, `direct` or a named outbound to allow.
+
+```toml
+# Block loopback explicitly (belt-and-suspenders alongside drop_loopback)
+[[acl]]
+addr     = "localhost"
+outbound = "drop"
+
+# Block all private ranges explicitly
+[[acl]]
+addr     = "private"
+outbound = "drop"
+
+# Allow only HTTPS and HTTP to the public internet
+[[acl]]
+addr     = "0.0.0.0/0"
+ports    = "tcp/80,tcp/443"
+outbound = "default"
+```
+
+You can also write ACL rules in the compact string format:
+
+```toml
+acl = '''
+drop localhost
+drop private
+direct 0.0.0.0/0 tcp/80,tcp/443
+'''
+```
+
+<Tip>
+Put `drop localhost` and `drop private` rules before any broad `direct` or `default` rules to ensure they are never bypassed.
+</Tip>
+
+## TLS certificate best practices
+
+TUIC requires TLS for all client connections. The quality of your certificate configuration directly affects the security of every proxied connection.
+
+<Steps>
+  <Step title="Use a publicly trusted certificate">
+    Enable built-in ACME to provision a Let's Encrypt certificate automatically. TUIC supports ACME for both domain names and IP addresses.
+
+    ```toml
+    [tls]
+    auto_ssl   = true
+    hostname   = "your.domain.com"
+    acme_email = "admin@your.domain.com"
+    ```
+  </Step>
+  <Step title="Set ALPN if required">
+    Add ALPN protocols to make TUIC traffic blend with standard HTTPS. `h3` is the HTTP/3 ALPN value and is the most common choice.
+
+    ```toml
+    [tls]
+    alpn = ["h3"]
+    ```
+  </Step>
+  <Step title="Rotate certificates without downtime">
+    TUIC supports hot-reload of TLS certificates. When the certificate file changes on disk, the server picks it up automatically — no restart needed.
+  </Step>
+</Steps>
+
+### Self-signed certificates
+
+Self-signed certificates are suitable for development or internal networks where you control all clients. Generate one with:
+
+```toml
+[tls]
+self_sign = true
+hostname  = "my-internal-server"
+```
+
+Clients connecting to a self-signed server must either add the certificate to their trust store or use `skip_cert_verify = true`.
+
+<Warning>
+`skip_cert_verify = true` on the client completely disables certificate validation. Anyone who can intercept the connection can present any certificate and the client will accept it. Use this only in isolated test environments — never in production.
+</Warning>
+
+## Zero-RTT handshake: the replay attack tradeoff
+
+QUIC supports 0-RTT connection establishment using session tickets from a previous connection. TUIC exposes this as `zero_rtt_handshake`. The server-side default is `false`:
+
+```toml
+# Server
+zero_rtt_handshake = false
+```
+
+**Why it is off by default:** 0-RTT data is inherently replayable. An attacker who captures a 0-RTT packet can resend it later. For a proxy protocol this means a captured CONNECT or UDP packet could be replayed to reach the destination again. The latency saving (one fewer round-trip on reconnect) rarely justifies this risk on a public server.
+
+Enable it only if:
+- Your server has no side effects from replayed proxy connections, and
+- You control all clients and can verify they do not expose 0-RTT sessions.
+
+```toml
+# Only enable if you fully understand the replay risk
+zero_rtt_handshake = true
+```
+
+## User authentication
+
+Users are identified by UUID and authenticated with a password. Both are required for every connection.
+
+```toml
+[users]
+# UUID = "password"
+f0e12827-fe60-458c-8269-a05ccb0ff8da = "strong-random-password-here"
+3b1c8e2d-4a5f-6789-bcde-0f1234567890 = "another-strong-password"
+```
+
+### Password strength
+
+- Use at least 20 characters of random alphanumeric material.
+- Generate passwords with a cryptographically secure generator, not human-memorable phrases.
+- The `tuic-server --init` command generates random passwords for example configs.
+
+### UUID rotation
+
+To rotate a compromised user without disrupting others:
+
+1. Add a new UUID/password pair to `[users]`.
+2. Distribute the new credentials to the user.
+3. Remove the old UUID and reload the server config.
+
+<Note>
+The server does not persist session state between restarts. Removing a UUID immediately prevents that user from reconnecting.
+</Note>
+
+## SOCKS5 authentication on the client
+
+The TUIC client exposes a SOCKS5 listener. Protect it with a username and password to prevent unauthorized use by processes on the same host:
+
+```toml
+[local]
+server   = "127.0.0.1:1080"
+username = "socks-user"
+password = "socks-pass"
+```
+
+<Info>
+SOCKS5 authentication applies only to the local listener between applications and the TUIC client. It does not affect the encrypted TUIC tunnel between client and server.
+</Info>
+
+## RESTful API security
+
+The management API must be locked down before exposing it, even on localhost.
+
+```toml
+[restful]
+# Bind to loopback only — never expose to 0.0.0.0
+addr   = "127.0.0.1:8443"
+
+# Use a strong random secret — at least 32 characters
+secret = "xK9mP2qR7nL4vB8wA1dC5eF3gH6jJ0kM"
+```
+
+### Choosing a secret
+
+The secret is sent as a Bearer token in every API request header. Treat it like a password:
+
+- Generate it with a cryptographically secure random source.
+- Never commit it to version control.
+- Rotate it if you suspect it has been exposed.
+
+### Network exposure
+
+Keep the API bound to `127.0.0.1` (or a private management interface). If you need remote access, put it behind a reverse proxy that enforces mTLS or network-level access controls.
+
+<Warning>
+If `addr` is set to a public interface and the secret is weak or empty, any caller on the internet can kick users, read traffic statistics, and enumerate active connections.
+</Warning>
+
+## Connection limit per user
+
+`maximum_clients_per_user` in `[restful]` caps how many simultaneous connections each UUID may maintain. When a new connection would exceed the limit, the server sends close code `6001` and the client is kicked:
+
+```toml
+[restful]
+addr                     = "127.0.0.1:8443"
+secret                   = "your-strong-secret"
+maximum_clients_per_user = 3   # 0 = unlimited
+```
+
+Set this to a low value (1–5) for single-user deployments, or leave it at `0` for shared servers where you manage access through UUIDs.
+
+## Complete hardened server example
+
+```toml
+server             = "[::]:443"
+zero_rtt_handshake = false
+
+[users]
+f0e12827-fe60-458c-8269-a05ccb0ff8da = "xK9mP2qR7nL4vB8wA1dC5eF3gH6jJ0kM"
+
+[tls]
+auto_ssl   = true
+hostname   = "proxy.example.com"
+acme_email = "admin@example.com"
+alpn       = ["h3"]
+
+[restful]
+addr                     = "127.0.0.1:8443"
+secret                   = "3nR7mQ2pK9vL4wB8dA1cE5fH6gJ0jM8x"
+maximum_clients_per_user = 5
+
+[experimental]
+drop_loopback = true
+drop_private  = true
+
+acl = '''
+drop localhost
+drop private
+'''
+```

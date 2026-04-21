@@ -1,80 +1,204 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: "Quickstart: run TUIC server and client in minutes"
+description: "Install tuic-server and tuic-client, write a minimal config for each, and verify your SOCKS5 proxy is tunneling traffic over QUIC in minutes."
 ---
 
-## Get started in three steps
+This guide walks you through running a TUIC server and connecting to it with the TUIC client. By the end you will have a working SOCKS5 proxy at `127.0.0.1:1080` tunneled over an encrypted QUIC connection.
 
-Get your documentation site running locally and make your first customization.
+<Steps>
 
-### Step 1: Set up your local environment
+<Step title="Install the server">
 
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
+Install `tuic-server` using Cargo or download a prebuilt binary from [GitHub Releases](https://github.com/Itsusinn/tuic/releases).
 
-### Step 2: Deploy your changes
+<CodeGroup>
 
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
+```bash cargo
+cargo install --git https://github.com/Itsusinn/tuic.git tuic-server
+```
 
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
+```bash binary (Linux x86_64)
+curl -Lo tuic-server https://github.com/Itsusinn/tuic/releases/latest/download/tuic-server-x86_64-unknown-linux-gnu
+chmod +x tuic-server
+sudo mv tuic-server /usr/local/bin/
+```
 
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
+</CodeGroup>
 
-### Step 3: Go live
+</Step>
 
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
+<Step title="Generate a starter config">
+
+Run `tuic-server --init` to write an example configuration file in the current directory, then open it for editing.
+
+```bash
+tuic-server --init
+```
+
+This creates a `config.toml` file with all available options commented and explained.
+
+</Step>
+
+<Step title="Write a minimal server config">
+
+Replace the generated file with this minimal working configuration. Fill in your own values for `uuid`, `password`, `certificate`, and `private_key`.
+
+```toml config.toml
+log_level = "info"
+
+# Listen on all interfaces, port 443
+server = "[::]:443"
+
+zero_rtt_handshake = false
+auth_timeout = "3s"
+task_negotiation_timeout = "3s"
+gc_interval = "10s"
+gc_lifetime = "30s"
+max_external_packet_size = 1500
+stream_timeout = "60s"
+
+[users]
+# Replace with your own UUID and a strong password
+f0e12827-fe60-458c-8269-a05ccb0ff8da = "your_strong_password"
+
+[tls]
+# Path to your TLS certificate and private key
+certificate = "/path/to/cert.crt"
+private_key = "/path/to/key.crt"
+hostname = "your.domain.com"
+
+[outbound.default]
+type = "direct"
+ip_mode = "v4first"
+```
+
+<Note>
+  If you do not have a TLS certificate yet, set `self_sign = true` and `hostname = "localhost"` in `[tls]` to use an auto-generated self-signed certificate. On the client side you will need to set `skip_cert_verify = true`.
+</Note>
+
+<Tip>
+  To use automatic Let's Encrypt certificates instead of providing your own, set `auto_ssl = true` and `hostname = "your.domain.com"` in `[tls]`. The server must be reachable on port 80 for the ACME HTTP-01 challenge.
+</Tip>
+
+</Step>
+
+<Step title="Start the server">
+
+Pass the config file path with `-c`:
+
+```bash
+tuic-server -c config.toml
+```
+
+You should see log output similar to:
+
+```text
+INFO tuic_server: Listening on [::]:443
+```
+
+<Warning>
+  Port 443 requires root or the `CAP_NET_BIND_SERVICE` capability on Linux. To grant it without running as root: `sudo setcap CAP_NET_BIND_SERVICE=+eip $(which tuic-server)`
+</Warning>
+
+</Step>
+
+<Step title="Install the client">
+
+Install `tuic-client` using Cargo or download a prebuilt binary from [GitHub Releases](https://github.com/Itsusinn/tuic/releases).
+
+<CodeGroup>
+
+```bash cargo
+cargo install --git https://github.com/Itsusinn/tuic.git tuic-client
+```
+
+```bash binary (Linux x86_64)
+curl -Lo tuic-client https://github.com/Itsusinn/tuic/releases/latest/download/tuic-client-x86_64-unknown-linux-gnu
+chmod +x tuic-client
+sudo mv tuic-client /usr/local/bin/
+```
+
+</CodeGroup>
+
+</Step>
+
+<Step title="Write a minimal client config">
+
+Create a `client.toml` with your server address, the UUID and password you set on the server, and a local SOCKS5 listen address.
+
+```toml client.toml
+log_level = "info"
+
+[relay]
+# Your server's hostname or IP address and port
+server = "your.domain.com:443"
+
+# Must match the UUID in the server's [users] table
+uuid = "f0e12827-fe60-458c-8269-a05ccb0ff8da"
+
+# Must match the password for that UUID on the server
+password = "your_strong_password"
+
+udp_relay_mode = "native"
+congestion_control = "cubic"
+zero_rtt_handshake = false
+timeout = "8s"
+heartbeat = "3s"
+
+[local]
+# SOCKS5 proxy will listen here
+server = "127.0.0.1:1080"
+dual_stack = true
+max_packet_size = 1500
+```
+
+<Info>
+  If you used a self-signed certificate on the server, add `skip_cert_verify = true` under `[relay]`. This is insecure — only use it for local testing.
+</Info>
+
+</Step>
+
+<Step title="Start the client">
+
+```bash
+tuic-client -c client.toml
+```
+
+You should see log output confirming the SOCKS5 server is listening:
+
+```text
+INFO tuic_client: SOCKS5 server listening on 127.0.0.1:1080
+```
+
+</Step>
+
+<Step title="Test the proxy">
+
+Send a request through the SOCKS5 proxy to verify traffic is being relayed:
+
+```bash
+curl --proxy socks5h://127.0.0.1:1080 https://ipinfo.io/ip
+```
+
+If the request succeeds and returns your server's IP address, the proxy is working correctly.
+
+</Step>
+
+</Steps>
 
 ## Next steps
 
-Now that you have your docs running, explore these key features:
-
 <CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
+  <Card title="Server configuration" icon="server" href="/server/configuration">
+    Explore all server options including ACL rules, outbound proxies, and QUIC tuning
+  </Card>
+  <Card title="TLS setup" icon="shield-check" href="/server/tls">
+    Configure ACME, self-signed certificates, or provide your own certificate files
+  </Card>
+  <Card title="Client configuration" icon="laptop" href="/client/configuration">
+    Set congestion control, port forwarding, UDP relay modes, and more
+  </Card>
+  <Card title="RESTful API" icon="plug" href="/advanced/restful-api">
+    Monitor traffic and manage connected clients via HTTP
+  </Card>
 </CardGroup>
-
-<Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
-</Note>

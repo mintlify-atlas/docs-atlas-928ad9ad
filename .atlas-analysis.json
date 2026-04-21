@@ -1,24 +1,11 @@
 {
-  "$schema": "https://mintlify.com/docs.json",
-  "name": "TUIC",
+  "projectType": "cli-tool",
+  "projectName": "TUIC",
+  "projectDescription": "A high-performance 0-RTT proxy protocol implementation over QUIC, featuring automatic TLS provisioning, ACL rules, and a RESTful management API.",
   "theme": "aspen",
-  "colors": {
-    "primary": "#949494",
-    "light": "#3c3c3c",
-    "dark": "#cccccc"
-  },
-  "favicon": "https://media.brand.dev/fd94c791-1ab2-4950-bbba-4b9eb2c35b07.svg",
-  "navbar": {
-    "primary": {
-      "type": "github",
-      "href": "https://github.com/Itsusinn/tuic"
-    }
-  },
-  "footer": {
-    "socials": {
-      "github": "https://github.com/Itsusinn/tuic"
-    }
-  },
+  "primaryColor": "#949494",
+  "lightColor": "#3c3c3c",
+  "darkColor": "#cccccc",
   "navigation": {
     "tabs": [
       {
@@ -79,5 +66,28 @@
         ]
       }
     ]
-  }
+  },
+  "keyFeatures": [
+    "0-RTT TCP and UDP proxying over QUIC",
+    "Automatic TLS certificate provisioning via ACME (Let's Encrypt)",
+    "Self-signed certificate support with hot-reload",
+    "Flexible ACL (Access Control List) with configurable outbound rules",
+    "RESTful API for traffic statistics and user management",
+    "BBR3 congestion control algorithm support",
+    "SOCKS5 outbound proxy support",
+    "TCP/UDP port forwarding (client)",
+    "Docker with multi-platform support (amd64, arm64)",
+    "JEMalloc and AWS-LC-RS for improved performance"
+  ],
+  "publicApiSurface": [
+    "tuic-server -c <config>",
+    "tuic-server -d <config-dir>",
+    "tuic-server --init",
+    "tuic-client -c <config>",
+    "GET /online",
+    "GET /detailed_online",
+    "POST /kick",
+    "GET /traffic",
+    "GET /reset_traffic"
+  ]
 }

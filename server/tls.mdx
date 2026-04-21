@@ -1,0 +1,137 @@
+---
+title: "TLS configuration for tuic-server: certificates and ACME"
+description: "Configure TLS for tuic-server using your own certificate, a self-signed cert, or automatic Let's Encrypt provisioning via the ACME HTTP-01 challenge."
+---
+
+QUIC requires TLS 1.3, so a valid TLS configuration is mandatory. `tuic-server` supports three modes: bring your own certificate, auto-generate a self-signed certificate, or obtain a certificate automatically from Let's Encrypt using ACME. All TLS options live under the `[tls]` section.
+
+## Mode 1: Bring your own certificate
+
+This is the most common production setup. You supply PEM-encoded certificate and private key files that you obtained from a certificate authority (e.g., Let's Encrypt via `acme.sh`, Certbot, or your CA's portal).
+
+```toml
+[tls]
+certificate = "/etc/tuic/cert.pem"
+private_key = "/etc/tuic/key.pem"
+hostname    = "your.domain.com"
+alpn        = []
+```
+
+<ParamField path="tls.certificate" type="string" default="">
+  Path to the PEM certificate chain file. Can be absolute or relative to `data_dir`. Both PEM and DER encoding are accepted.
+</ParamField>
+
+<ParamField path="tls.private_key" type="string" default="">
+  Path to the PEM private key file. Can be absolute or relative to `data_dir`. Both PEM and DER encoding are accepted.
+</ParamField>
+
+<ParamField path="tls.hostname" type="string" default="localhost">
+  The domain name or IP address associated with the certificate. Used for display and validation purposes.
+</ParamField>
+
+<ParamField path="tls.alpn" type="array" default="[]">
+  List of ALPN protocol identifiers to advertise. For QUIC-based HTTP/3 use `["h3"]`. Leave empty to advertise no specific protocol.
+</ParamField>
+
+### Obtaining a certificate with acme.sh
+
+If you prefer to manage certificate renewal yourself, `acme.sh` is a popular option:
+
+```bash
+# Issue a certificate via HTTP-01 standalone challenge
+acme.sh --issue -d your.domain.com --standalone
+
+# Install it to a fixed path that tuic-server can read
+acme.sh --install-cert -d your.domain.com \
+  --key-file       /etc/tuic/key.pem  \
+  --fullchain-file /etc/tuic/cert.pem
+```
+
+### Automatic certificate hot-reload
+
+When you use Mode 1, `tuic-server` watches the certificate and key files for changes using a SHA-256 hash comparison. When the files change on disk the server reloads them in the background **without restarting**.
+
+<Tip>
+  This means you can renew your certificate with `acme.sh --renew` or Certbot and the server will pick up the new certificate automatically.
+</Tip>
+
+## Mode 2: Self-signed certificate
+
+For local testing, internal networks, or clients that are configured to skip certificate verification, you can ask `tuic-server` to generate a self-signed certificate at startup.
+
+```toml
+[tls]
+self_sign = true
+hostname  = "localhost"
+```
+
+<ParamField path="tls.self_sign" type="boolean" default="false">
+  When `true`, the server generates a self-signed certificate using `rcgen` at startup. The `hostname` field is used as the Common Name and Subject Alternative Name.
+</ParamField>
+
+<Warning>
+  Self-signed certificates are not trusted by default. Clients must be explicitly configured to accept them (e.g., by disabling certificate verification or pinning the certificate). Do not use self-signed certificates for public-facing servers.
+</Warning>
+
+## Mode 3: Automatic ACME via Let's Encrypt
+
+`tuic-server` includes built-in ACME support using `rustls-acme`. When enabled, the server automatically obtains and renews a certificate from Let's Encrypt without any external tooling.
+
+```toml
+[tls]
+auto_ssl   = true
+hostname   = "your.domain.com"
+acme_email = "admin@your.domain.com"
+```
+
+<ParamField path="tls.auto_ssl" type="boolean" default="false">
+  When `true`, enables the built-in ACME client. The server will attempt to obtain a certificate from Let's Encrypt for `hostname`.
+</ParamField>
+
+<ParamField path="tls.hostname" type="string">
+  The fully qualified domain name for which the certificate is issued. Must be a valid public domain resolvable to the server's IP address.
+</ParamField>
+
+<ParamField path="tls.acme_email" type="string" default="">
+  Contact email for the ACME account. Used by Let's Encrypt for expiry notifications. When empty, the server defaults to `admin@<hostname>`.
+</ParamField>
+
+### How ACME HTTP-01 works
+
+When ACME is triggered, `tuic-server` spins up a temporary HTTP server on **port 80** to answer the Let's Encrypt HTTP-01 challenge. Once the challenge is complete and the certificate is deployed, the HTTP server shuts down.
+
+Certificate files are cached in `data_dir` under the names `<hostname>.cer.pem` and `<hostname>.key.pem`. On subsequent starts the cached certificate is used and renewed automatically before it expires.
+
+<Warning>
+  Port 80 must be reachable from the public internet for ACME to succeed. Ensure your firewall allows inbound TCP connections on port 80 during the initial issuance and renewal.
+</Warning>
+
+### Binding port 80 as a non-root user
+
+On Linux, binding to ports below 1024 normally requires root. To allow a non-root `tuic-server` to bind port 80, grant the capability to the binary:
+
+```bash
+sudo setcap CAP_NET_BIND_SERVICE=+eip /usr/local/bin/tuic-server
+```
+
+<Note>
+  You must re-run `setcap` each time you update the binary, because the capability is stored on the file inode.
+</Note>
+
+### ACME fallback behaviour
+
+If ACME certificate provisioning fails (e.g., the domain is not yet publicly reachable), the server falls back to a self-signed certificate if `self_sign = true` is also set. Otherwise, the server exits with an error.
+
+## TLS option reference
+
+All `[tls]` fields at a glance:
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `self_sign` | bool | `false` | Generate a self-signed certificate at startup |
+| `certificate` | path | `""` | Path to the certificate chain file |
+| `private_key` | path | `""` | Path to the private key file |
+| `alpn` | array | `[]` | ALPN protocols to advertise |
+| `hostname` | string | `"localhost"` | Domain name for the certificate |
+| `auto_ssl` | bool | `false` | Enable built-in ACME provisioning |
+| `acme_email` | string | `""` | Contact email for the ACME account |

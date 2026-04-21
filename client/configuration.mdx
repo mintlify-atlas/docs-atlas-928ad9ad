@@ -1,0 +1,275 @@
+---
+title: "Configure tuic-client: relay, SOCKS5, and QUIC options"
+description: "Complete reference for tuic-client configuration: relay connection, SOCKS5 listener, QUIC tuning, TLS, startup behavior, and outbound proxy settings."
+---
+
+`tuic-client` is configured with a single file passed via `-c PATH`. TOML is the recommended format; JSON5 (`.json`, `.json5`) and YAML (`.yaml`, `.yml`) are also supported. The format is detected from the file extension. You can override detection with the `TUIC_FORCE_TOML` or `TUIC_CONFIG_FORMAT` environment variables.
+
+## Config file format
+
+<Tabs>
+  <Tab title="TOML (recommended)">
+    Use a `.toml` extension. TOML is the recommended format for new configurations.
+
+    ```toml config.toml
+    log_level = "info"
+
+    [relay]
+    server = "example.com:443"
+    uuid   = "00000000-0000-0000-0000-000000000000"
+    password = "your_password_here"
+
+    [local]
+    server = "127.0.0.1:1080"
+    ```
+  </Tab>
+  <Tab title="JSON5 (legacy)">
+    Use a `.json` or `.json5` extension. JSON5 supports comments and trailing commas.
+
+    ```json5 config.json5
+    {
+      log_level: "info",
+      relay: {
+        server: "example.com:443",
+        uuid: "00000000-0000-0000-0000-000000000000",
+        password: "your_password_here",
+      },
+      local: {
+        server: "127.0.0.1:1080",
+      },
+    }
+    ```
+  </Tab>
+  <Tab title="YAML">
+    Use a `.yaml` or `.yml` extension.
+
+    ```yaml config.yaml
+    log_level: info
+
+    relay:
+      server: "example.com:443"
+      uuid: "00000000-0000-0000-0000-000000000000"
+      password: "your_password_here"
+
+    local:
+      server: "127.0.0.1:1080"
+    ```
+  </Tab>
+</Tabs>
+
+## Environment variables
+
+| Variable             | Effect                                                                                              |
+| -------------------- | --------------------------------------------------------------------------------------------------- |
+| `TUIC_FORCE_TOML`    | When set (any value), always parse the config file as TOML regardless of file extension.            |
+| `TUIC_CONFIG_FORMAT` | Explicitly set the format: `toml`, `json5`, or `yaml`. Takes precedence over the file extension.    |
+
+## Top-level options
+
+<ParamField path="log_level" type="string" default="info">
+  Log verbosity. Accepted values: `trace`, `debug`, `info`, `warn`, `error`. Only `tuic`, `tuic_quinn`, and `tuic_client` loggers are affected; all others default to `info`.
+</ParamField>
+
+## [relay] section
+
+The `[relay]` section configures the connection to the TUIC server.
+
+<ParamField path="relay.server" type="string" required>
+  Server address in `hostname:port` or `IP:port` format. IPv6 addresses must be bracketed: `[::1]:443`.
+</ParamField>
+
+<ParamField path="relay.uuid" type="string" required>
+  User UUID registered on the server, in standard hyphenated format: `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`.
+</ParamField>
+
+<ParamField path="relay.password" type="string" required>
+  User password registered on the server.
+</ParamField>
+
+<ParamField path="relay.ip" type="string">
+  Bind IP address for outgoing QUIC connections. Useful when the host has multiple network interfaces. Omit to use the system default.
+</ParamField>
+
+<ParamField path="relay.ipstack_prefer" type="string" default="v4first">
+  IP stack preference when resolving the server hostname. Accepted values:
+
+  - `v4first` — prefer IPv4, fall back to IPv6
+  - `v6first` — prefer IPv6, fall back to IPv4
+  - `v4only` — use IPv4 only
+  - `v6only` — use IPv6 only
+
+  Legacy aliases (`v4`, `v6`, `v4v6`, `v6v4`, `prefer_v4`, `prefer_v6`, `only_v4`, `only_v6`) are also accepted for backwards compatibility.
+</ParamField>
+
+<ParamField path="relay.certificates" type="string[]" default="[]">
+  Paths to additional PEM-encoded CA certificate files used to verify the server's TLS certificate. Useful when the server uses a private CA or a self-signed certificate.
+</ParamField>
+
+<ParamField path="relay.udp_relay_mode" type="string" default="native">
+  UDP relay mode. `native` preserves native UDP semantics (unreliable, unordered). `quic` transfers UDP packets over QUIC streams for lossless delivery at the cost of ordering guarantees.
+</ParamField>
+
+<ParamField path="relay.congestion_control" type="string" default="bbr">
+  QUIC congestion control algorithm. Accepted values: `cubic`, `new_reno`, `bbr`, `bbr3`.
+</ParamField>
+
+<ParamField path="relay.alpn" type="string[]" default="[]">
+  ALPN protocol identifiers advertised during the TLS handshake. Example: `["h3", "h2"]`. Leave empty to send no ALPN extension.
+</ParamField>
+
+<ParamField path="relay.zero_rtt_handshake" type="boolean" default="false">
+  Enable QUIC 0-RTT handshake. Reduces connection establishment latency on reconnects but is vulnerable to replay attacks. Only enable when you trust the network path.
+</ParamField>
+
+<ParamField path="relay.disable_sni" type="boolean" default="false">
+  Suppress the SNI extension in the TLS ClientHello. Useful when connecting by IP address or routing through SNI-based censorship.
+</ParamField>
+
+<ParamField path="relay.sni" type="string">
+  Override the SNI hostname sent during TLS handshake. Defaults to the hostname in `server`. Set this when the TLS certificate is issued for a name different from the connection address.
+</ParamField>
+
+<ParamField path="relay.timeout" type="string" default="8s">
+  Connection establishment timeout as a human-readable duration (e.g. `"8s"`, `"500ms"`).
+</ParamField>
+
+<ParamField path="relay.startup_mode" type="string" default="lazy">
+  Controls when the client attempts its first connection to the server:
+
+  - `eager` — connect immediately on startup; exit if the server is unreachable
+  - `lazy` — connect on the first incoming SOCKS5 or forwarding request; exit on failure
+  - `loop` — connect on the first incoming request; retry forever until the connection succeeds
+</ParamField>
+
+<ParamField path="relay.heartbeat" type="string" default="3s">
+  Interval between QUIC PING frames sent to keep the connection alive through NAT devices.
+</ParamField>
+
+<ParamField path="relay.disable_native_certs" type="boolean" default="false">
+  Disable the system native certificate store. When `true`, only certificates listed in `certificates` are trusted.
+</ParamField>
+
+<ParamField path="relay.send_window" type="integer" default="16777216">
+  QUIC send window size in bytes. Default is 16 MiB.
+</ParamField>
+
+<ParamField path="relay.receive_window" type="integer" default="8388608">
+  QUIC receive window size in bytes. Default is 8 MiB.
+</ParamField>
+
+<ParamField path="relay.initial_mtu" type="integer" default="1200">
+  Initial QUIC path MTU in bytes.
+</ParamField>
+
+<ParamField path="relay.min_mtu" type="integer" default="1200">
+  Minimum QUIC path MTU in bytes.
+</ParamField>
+
+<ParamField path="relay.gso" type="boolean" default="true">
+  Enable Generic Segmentation Offload (GSO) for UDP sends. Improves throughput on Linux hosts that support GSO.
+</ParamField>
+
+<ParamField path="relay.pmtu" type="boolean" default="true">
+  Enable Path MTU Discovery (PMTUD). Allows QUIC to probe for and use a larger MTU than `initial_mtu`.
+</ParamField>
+
+<ParamField path="relay.gc_interval" type="string" default="3s">
+  Interval between garbage collection passes that clean up expired QUIC stream state.
+</ParamField>
+
+<ParamField path="relay.gc_lifetime" type="string" default="15s">
+  Maximum lifetime of idle QUIC stream state before it is collected.
+</ParamField>
+
+<ParamField path="relay.skip_cert_verify" type="boolean" default="false">
+  Skip TLS certificate verification entirely. **Insecure — use only for local testing against self-signed servers.**
+</ParamField>
+
+## [relay.proxy] section
+
+The optional `[relay.proxy]` subsection routes the QUIC connection to the TUIC server through a SOCKS5 outbound proxy.
+
+<ParamField path="relay.proxy.server" type="string" required>
+  SOCKS5 proxy address in `hostname:port` format.
+</ParamField>
+
+<ParamField path="relay.proxy.username" type="string">
+  SOCKS5 proxy username. Omit for unauthenticated proxies.
+</ParamField>
+
+<ParamField path="relay.proxy.password" type="string">
+  SOCKS5 proxy password. Omit for unauthenticated proxies.
+</ParamField>
+
+<ParamField path="relay.proxy.udp_buffer_size" type="integer" default="2048">
+  UDP socket buffer size in bytes for the SOCKS5 proxy UDP association.
+</ParamField>
+
+## [local] section
+
+The `[local]` section configures the local SOCKS5 server that applications connect to.
+
+<ParamField path="local.server" type="string" default="127.0.0.1:1080">
+  SOCKS5 listen address as a `SocketAddr`. Use `[::1]:1080` for IPv6 loopback or `0.0.0.0:1080` to listen on all interfaces.
+</ParamField>
+
+<ParamField path="local.username" type="string">
+  SOCKS5 authentication username. When set together with `password`, the client requires SOCKS5 username/password auth from connecting applications.
+</ParamField>
+
+<ParamField path="local.password" type="string">
+  SOCKS5 authentication password. Required when `username` is set.
+</ParamField>
+
+<ParamField path="local.dual_stack" type="boolean">
+  Enable dual-stack (IPv4 and IPv6) on the SOCKS5 listener socket. When omitted, the OS default is used.
+</ParamField>
+
+<ParamField path="local.max_packet_size" type="integer" default="1500">
+  Maximum UDP packet size in bytes for SOCKS5 UDP ASSOCIATE.
+</ParamField>
+
+## Complete example
+
+```toml config.toml
+log_level = "info"
+
+[relay]
+server              = "example.com:443"
+uuid                = "00000000-0000-0000-0000-000000000000"
+password            = "your_password_here"
+ipstack_prefer      = "v4first"
+udp_relay_mode      = "native"
+congestion_control  = "bbr"
+alpn                = []
+zero_rtt_handshake  = false
+disable_sni         = false
+timeout             = "8s"
+startup_mode        = "lazy"
+heartbeat           = "3s"
+disable_native_certs = false
+send_window         = 16777216
+receive_window      = 8388608
+initial_mtu         = 1200
+min_mtu             = 1200
+gso                 = true
+pmtu                = true
+gc_interval         = "3s"
+gc_lifetime         = "15s"
+skip_cert_verify    = false
+
+[local]
+server           = "127.0.0.1:1080"
+dual_stack       = true
+max_packet_size  = 1500
+```
+
+<Warning>
+  `skip_cert_verify = true` disables all TLS certificate validation and makes the connection vulnerable to man-in-the-middle attacks. Never use it in production.
+</Warning>
+
+## Next step
+
+<Card title="TCP and UDP port forwarding" icon="arrows-left-right" href="/client/port-forwarding">
+  Forward local ports directly to remote hosts through the TUIC tunnel
+</Card>

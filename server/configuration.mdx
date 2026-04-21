@@ -1,0 +1,281 @@
+---
+title: "Configure tuic-server: all options and file formats"
+description: "Complete reference for every tuic-server config option: users, networking, QUIC tuning, outbound rules, and environment variable overrides."
+---
+
+`tuic-server` reads a single configuration file on startup. The file format is detected automatically from the file extension, but can be overridden with environment variables. TOML is the recommended format for new configurations.
+
+## Supported formats
+
+| Extension | Format | Notes |
+|---|---|---|
+| `.toml` | TOML | Recommended |
+| `.json`, `.json5` | JSON5 | Legacy format, still fully supported |
+| `.yaml`, `.yml` | YAML | Supported |
+
+When the extension is absent or unrecognised, the server infers the format from file content. You can override this behaviour with environment variables (see [below](#environment-variable-overrides)).
+
+## Generating a starter file
+
+Run `--init` to write a fully annotated example to `config.toml` in the current directory:
+
+```bash
+tuic-server --init
+```
+
+## Complete configuration example
+
+The following TOML file shows every supported option with its default value and a short comment.
+
+```toml
+# Logging level: trace, debug, info, warn, error, off
+log_level = "info"
+
+# Socket address to listen on
+server = "[::]:443"
+
+# Working directory for relative certificate/key paths
+data_dir = ""
+
+# Create separate UDP sockets for relaying IPv6 UDP packets
+udp_relay_ipv6 = true
+
+# Enable 0-RTT QUIC handshake (recommended: false for security)
+zero_rtt_handshake = false
+
+# Whether the listening socket should be dual-stack (IPv4 + IPv6)
+dual_stack = true
+
+# How long to wait for the client authentication command
+auth_timeout = "3s"
+
+# Maximum duration for task negotiation
+task_negotiation_timeout = "3s"
+
+# Interval between UDP packet fragment garbage collection
+gc_interval = "10s"
+
+# How long to keep UDP packet fragments before dropping them
+gc_lifetime = "30s"
+
+# Maximum packet size received from outbound UDP sockets (bytes)
+max_external_packet_size = 1500
+
+# How long to preserve TCP and UDP I/O tasks
+stream_timeout = "60s"
+
+# User list: UUID = password
+[users]
+f0e12827-fe60-458c-8269-a05ccb0ff8da = "change-me"
+
+[tls]
+self_sign   = false
+certificate = "/etc/tuic/cert.pem"
+private_key = "/etc/tuic/key.pem"
+alpn        = []
+hostname    = "your.domain.com"
+auto_ssl    = false
+acme_email  = ""
+
+[restful]
+addr                    = "127.0.0.1:8443"
+secret                  = "YOUR_SECRET_HERE"
+maximum_clients_per_user = 0
+
+[quic]
+initial_mtu    = 1200
+min_mtu        = 1200
+gso            = true
+pmtu           = true
+send_window    = 16777216
+receive_window = 8388608
+max_idle_time  = "30s"
+
+[quic.congestion_control]
+controller     = "bbr"
+initial_window = 1048576
+
+[experimental]
+drop_loopback = true
+drop_private  = true
+
+[outbound]
+[outbound.default]
+type    = "direct"
+ip_mode = "v4first"
+```
+
+## Top-level options
+
+<ParamField path="log_level" type="string" default="info">
+  Logging verbosity. One of `trace`, `debug`, `info`, `warn`, `error`, `off`.
+</ParamField>
+
+<ParamField path="server" type="string" default="[::]:8443">
+  Socket address the server listens on. Accepts IPv4 (`0.0.0.0:443`), IPv6 (`[::]:443`), or a dual-stack address.
+</ParamField>
+
+<ParamField path="data_dir" type="string" default="">
+  Working directory used to resolve relative certificate and key paths. Defaults to the process current directory when empty.
+</ParamField>
+
+<ParamField path="udp_relay_ipv6" type="boolean" default="true">
+  When `true`, creates separate UDP sockets for IPv6 UDP relay.
+</ParamField>
+
+<ParamField path="zero_rtt_handshake" type="boolean" default="false">
+  Enables QUIC 0-RTT handshakes. Improves latency on reconnection but opens a replay-attack window. Leave `false` unless you understand the trade-offs.
+</ParamField>
+
+<ParamField path="dual_stack" type="boolean" default="true">
+  Sets `IPV6_V6ONLY = false` on the listening socket so that a single `[::]:443` binding accepts both IPv4 and IPv6 connections.
+</ParamField>
+
+<ParamField path="auth_timeout" type="duration" default="3s">
+  Maximum time the server waits for the client to send its authentication command after the QUIC handshake completes. Human-readable format: `"3s"`, `"500ms"`.
+</ParamField>
+
+<ParamField path="task_negotiation_timeout" type="duration" default="3s">
+  Maximum duration for a single task negotiation round-trip.
+</ParamField>
+
+<ParamField path="gc_interval" type="duration" default="10s">
+  How often the server runs UDP packet fragment garbage collection.
+</ParamField>
+
+<ParamField path="gc_lifetime" type="duration" default="30s">
+  Maximum time to hold a UDP packet fragment before discarding it.
+</ParamField>
+
+<ParamField path="max_external_packet_size" type="integer" default="1500">
+  Maximum byte size of UDP packets received from outbound sockets. Packets larger than this value are dropped.
+</ParamField>
+
+<ParamField path="stream_timeout" type="duration" default="60s">
+  How long to keep idle TCP and UDP I/O tasks alive before closing them.
+</ParamField>
+
+## `[users]`
+
+A TOML inline table mapping user UUIDs to plaintext passwords:
+
+```toml
+[users]
+f0e12827-fe60-458c-8269-a05ccb0ff8da = "hunter2"
+a1b2c3d4-e5f6-7890-abcd-ef1234567890 = "another-password"
+```
+
+You can add as many users as you need. Each UUID must be a valid v4 UUID.
+
+## `[quic]`
+
+<ParamField path="quic.congestion_control.controller" type="string" default="bbr">
+  Congestion control algorithm: `bbr`, `bbr3`, `cubic`, `new_reno`.
+</ParamField>
+
+<ParamField path="quic.congestion_control.initial_window" type="integer" default="1048576">
+  Initial congestion window size in bytes (1 MiB by default).
+</ParamField>
+
+<ParamField path="quic.initial_mtu" type="integer" default="1200">
+  Initial UDP payload size before MTU discovery. Must be at least 1200.
+</ParamField>
+
+<ParamField path="quic.min_mtu" type="integer" default="1200">
+  Minimum guaranteed MTU. Must be at least 1200 and less than or equal to `initial_mtu`.
+</ParamField>
+
+<ParamField path="quic.gso" type="boolean" default="true">
+  Enable Generic Segmentation Offload. Reduces CPU overhead on Linux kernels that support it.
+</ParamField>
+
+<ParamField path="quic.pmtu" type="boolean" default="true">
+  Enable Path MTU Discovery.
+</ParamField>
+
+<ParamField path="quic.send_window" type="integer" default="16777216">
+  Maximum bytes the server may transmit to a peer without acknowledgment (16 MiB).
+</ParamField>
+
+<ParamField path="quic.receive_window" type="integer" default="8388608">
+  Maximum bytes a peer may transmit per stream without acknowledgment (8 MiB).
+</ParamField>
+
+<ParamField path="quic.max_idle_time" type="duration" default="30s">
+  How long to wait before closing an idle QUIC connection.
+</ParamField>
+
+## `[restful]`
+
+The optional RESTful API lets you query live traffic stats, list online clients, and kick users.
+
+<ParamField path="restful.addr" type="string" default="127.0.0.1:8443">
+  Address to bind the RESTful API server. Omit the `[restful]` section entirely to disable the API.
+</ParamField>
+
+<ParamField path="restful.secret" type="string" default="YOUR_SECRET_HERE">
+  Bearer token required in the `Authorization` header for all API requests.
+</ParamField>
+
+<ParamField path="restful.maximum_clients_per_user" type="integer" default="0">
+  Limit simultaneous connections per UUID. `0` means unlimited.
+</ParamField>
+
+## `[outbound]`
+
+Controls how the server opens connections on behalf of clients. See the [ACL page](/server/acl) for how outbound names are referenced from rules.
+
+```toml
+[outbound.default]
+type    = "direct"
+ip_mode = "v4first"   # v4first | v6first | v4only | v6only
+
+# Named outbound — referenced from ACL rules by name
+[outbound.through_socks5]
+type      = "socks5"
+addr      = "127.0.0.1:1080"
+username  = "optional"
+password  = "optional"
+allow_udp = false
+```
+
+<ParamField path="outbound.*.type" type="string" default="direct">
+  Outbound type. `"direct"` opens connections from the server host. `"socks5"` proxies connections through an upstream SOCKS5 server.
+</ParamField>
+
+<ParamField path="outbound.*.ip_mode" type="string" default="v4first">
+  IP version preference for direct connections: `v4first`, `v6first`, `v4only`, `v6only`. Legacy aliases `prefer_v4`, `prefer_v6`, `only_v4`, `only_v6` are also accepted.
+</ParamField>
+
+## `[experimental]`
+
+<ParamField path="experimental.drop_loopback" type="boolean" default="true">
+  Drop connections targeting loopback addresses (`127.0.0.1`, `::1`) when no explicit ACL rule matches. Prevents accidental exposure of localhost services.
+</ParamField>
+
+<ParamField path="experimental.drop_private" type="boolean" default="true">
+  Drop connections targeting RFC 1918 private ranges (`10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`, `fc00::/7`, `fe80::/10`) when no explicit ACL rule matches.
+</ParamField>
+
+## Environment variable overrides
+
+Three environment variables control how the configuration file is parsed:
+
+| Variable | Behaviour |
+|---|---|
+| `TUIC_FORCE_TOML` | When set (any value), always parse the config as TOML regardless of file extension or content. Takes highest priority. |
+| `TUIC_CONFIG_FORMAT` | Explicitly set the format: `toml`, `json`, `json5`, `yaml`, or `yml`. Overrides file extension but is overridden by `TUIC_FORCE_TOML`. |
+| `IN_DOCKER` | When set to `true`, disables extension-based format detection and infers the format from file content. Useful when the config filename is fixed by a volume mount. |
+
+Format detection priority (highest to lowest): `TUIC_FORCE_TOML` → `TUIC_CONFIG_FORMAT` → file extension → content inference (Docker mode).
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="TLS configuration" icon="lock" href="/server/tls">
+    Set up your certificate, use self-signed mode, or enable automatic ACME provisioning.
+  </Card>
+  <Card title="Access control list" icon="shield" href="/server/acl">
+    Write ACL rules to allow, block, or redirect traffic by address, CIDR, or port.
+  </Card>
+</CardGroup>

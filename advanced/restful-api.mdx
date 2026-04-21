@@ -1,0 +1,264 @@
+---
+title: "RESTful API for server management"
+description: "Monitor active connections, track per-user traffic, and kick clients programmatically using the TUIC server's built-in HTTP management API."
+---
+
+The TUIC server ships with a lightweight HTTP management API built on [Axum](https://github.com/tokio-rs/axum). When enabled, it gives you real-time visibility into who is connected and how much traffic they have used, and lets you forcibly disconnect users without restarting the server.
+
+## Configuration
+
+Enable the API by adding a `[restful]` section to your server config:
+
+```toml
+[restful]
+# Address the HTTP server binds to. Keep this on loopback unless you have
+# additional access controls in front of it.
+addr   = "127.0.0.1:8443"
+
+# Bearer token required on every request.
+secret = "your-strong-secret-here"
+
+# Maximum simultaneous connections per user UUID. 0 = unlimited.
+# When a new connection would exceed this limit, the server closes it
+# with QUIC error code 6001.
+maximum_clients_per_user = 0
+```
+
+<Note>
+The RESTful section is optional. If `[restful]` is absent from the config, the HTTP server does not start and none of the endpoints are available.
+</Note>
+
+### Configuration fields
+
+<ParamField path="addr" type="string" required default="127.0.0.1:8443">
+  Socket address the HTTP server listens on. Bind to `127.0.0.1` to restrict access to the local machine, or a private interface for remote management.
+</ParamField>
+
+<ParamField path="secret" type="string" required>
+  Bearer token that must be present in the `Authorization` header of every request. Use a cryptographically random string of at least 32 characters.
+</ParamField>
+
+<ParamField path="maximum_clients_per_user" type="number" default="0">
+  Maximum number of simultaneous QUIC connections allowed per user UUID. `0` disables the limit. When a new connection from a known UUID would push the count above this value, the server immediately closes it with error code `6001`.
+</ParamField>
+
+## Authentication
+
+Every request must include a `Authorization: Bearer <secret>` header. Requests with a missing or incorrect token receive `401 Unauthorized`.
+
+```bash
+curl -H 'Authorization: Bearer your-strong-secret-here' \
+     http://127.0.0.1:8443/online
+```
+
+## Endpoints
+
+### GET /online
+
+Returns the number of active QUIC connections for each user that currently has at least one open connection.
+
+**Response:** `200 OK` with a JSON object mapping UUID strings to connection counts.
+
+<ResponseField name="{uuid}" type="number">
+  Number of active connections for this user UUID. Users with zero connections are omitted from the response.
+</ResponseField>
+
+<CodeGroup>
+
+```bash curl
+curl -H 'Authorization: Bearer your-strong-secret-here' \
+     http://127.0.0.1:8443/online
+```
+
+```json response
+{
+  "f0e12827-fe60-458c-8269-a05ccb0ff8da": 3,
+  "3b1c8e2d-4a5f-6789-bcde-0f1234567890": 1
+}
+```
+
+</CodeGroup>
+
+---
+
+### GET /detailed_online
+
+Returns the remote socket addresses of every active connection, grouped by user UUID. Useful for auditing where connections are coming from.
+
+**Response:** `200 OK` with a JSON object mapping UUID strings to arrays of `"ip:port"` strings.
+
+<ResponseField name="{uuid}" type="string[]">
+  Array of remote socket addresses (IPv4 or IPv6 with port) for all active connections from this user. Users with zero connections are omitted.
+</ResponseField>
+
+<CodeGroup>
+
+```bash curl
+curl -H 'Authorization: Bearer your-strong-secret-here' \
+     http://127.0.0.1:8443/detailed_online
+```
+
+```json response
+{
+  "f0e12827-fe60-458c-8269-a05ccb0ff8da": [
+    "203.0.113.42:51234",
+    "203.0.113.42:51235",
+    "198.51.100.7:44321"
+  ],
+  "3b1c8e2d-4a5f-6789-bcde-0f1234567890": [
+    "2001:db8::1:8080"
+  ]
+}
+```
+
+</CodeGroup>
+
+---
+
+### POST /kick
+
+Closes all active QUIC connections for the specified user UUIDs. Kicked clients receive QUIC application error code `6002` with the message `"Client got kicked"`. They can reconnect immediately — this does not permanently ban a user.
+
+**Request body:** JSON array of UUID strings.
+
+**Response:** `200 OK` with no body.
+
+<ParamField path="body" type="string[]" required>
+  Array of UUID strings identifying the users to disconnect.
+</ParamField>
+
+<CodeGroup>
+
+```bash curl
+curl -X POST \
+     -H 'Authorization: Bearer your-strong-secret-here' \
+     -H 'Content-Type: application/json' \
+     -d '["f0e12827-fe60-458c-8269-a05ccb0ff8da"]' \
+     http://127.0.0.1:8443/kick
+```
+
+```bash kick multiple users
+curl -X POST \
+     -H 'Authorization: Bearer your-strong-secret-here' \
+     -H 'Content-Type: application/json' \
+     -d '["f0e12827-fe60-458c-8269-a05ccb0ff8da","3b1c8e2d-4a5f-6789-bcde-0f1234567890"]' \
+     http://127.0.0.1:8443/kick
+```
+
+</CodeGroup>
+
+<Note>
+Kicking a user only closes existing connections. The UUID remains in the `[users]` table and the client can reconnect immediately. To permanently revoke access, remove the UUID from the config and reload the server.
+</Note>
+
+---
+
+### GET /traffic
+
+Returns cumulative traffic counters for each user since the server started (or since the last `/reset_traffic` call). Only users who have transferred at least one byte appear in the response.
+
+**Response:** `200 OK` with a JSON object mapping UUID strings to `{tx, rx}` objects.
+
+<ResponseField name="{uuid}" type="object">
+  Traffic counters for this user.
+  <Expandable title="fields">
+    <ResponseField name="tx" type="number">
+      Bytes transmitted from the server to the user's downstream (outbound traffic).
+    </ResponseField>
+    <ResponseField name="rx" type="number">
+      Bytes received from the user by the server (inbound traffic).
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<CodeGroup>
+
+```bash curl
+curl -H 'Authorization: Bearer your-strong-secret-here' \
+     http://127.0.0.1:8443/traffic
+```
+
+```json response
+{
+  "f0e12827-fe60-458c-8269-a05ccb0ff8da": {
+    "tx": 104857600,
+    "rx": 52428800
+  },
+  "3b1c8e2d-4a5f-6789-bcde-0f1234567890": {
+    "tx": 2097152,
+    "rx": 1048576
+  }
+}
+```
+
+</CodeGroup>
+
+<Warning>
+Traffic counters are held in memory and are lost when the server restarts. If you need persistent usage data, poll `/traffic` regularly and store the results externally.
+</Warning>
+
+---
+
+### GET /reset_traffic
+
+Atomically reads the current traffic counters and resets them to zero. The returned values are the counts that were accumulated before the reset. Subsequent calls to `/traffic` will show zero until new traffic arrives.
+
+**Response:** `200 OK` with a JSON object in the same format as `/traffic`.
+
+<ResponseField name="{uuid}" type="object">
+  Traffic counters for this user **before** the reset.
+  <Expandable title="fields">
+    <ResponseField name="tx" type="number">
+      Bytes transmitted since the last reset (or server start).
+    </ResponseField>
+    <ResponseField name="rx" type="number">
+      Bytes received since the last reset (or server start).
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+<CodeGroup>
+
+```bash curl
+curl -H 'Authorization: Bearer your-strong-secret-here' \
+     http://127.0.0.1:8443/reset_traffic
+```
+
+```json response
+{
+  "f0e12827-fe60-458c-8269-a05ccb0ff8da": {
+    "tx": 104857600,
+    "rx": 52428800
+  }
+}
+```
+
+</CodeGroup>
+
+<Tip>
+Use `/reset_traffic` in a periodic billing or quota script to collect the usage for a billing period and start a fresh counter in a single atomic operation.
+</Tip>
+
+## Endpoint summary
+
+| Method | Path | Description |
+|---|---|---|
+| `GET` | `/online` | Connection count per user |
+| `GET` | `/detailed_online` | Remote addresses per user |
+| `POST` | `/kick` | Disconnect specified users |
+| `GET` | `/traffic` | Cumulative byte counters per user |
+| `GET` | `/reset_traffic` | Read and atomically reset counters |
+
+## Error codes
+
+| HTTP status | Meaning |
+|---|---|
+| `200 OK` | Request succeeded |
+| `401 Unauthorized` | Missing or incorrect `Authorization` header |
+
+QUIC-level close codes used by the API:
+
+| Code | Trigger |
+|---|---|
+| `6001` | Connection rejected — `maximum_clients_per_user` exceeded |
+| `6002` | Connection closed — user was kicked via `/kick` |

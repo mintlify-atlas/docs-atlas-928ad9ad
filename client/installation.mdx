@@ -1,0 +1,75 @@
+---
+title: "Install tuic-client on Linux, macOS, and Windows"
+description: "Download a prebuilt tuic-client binary from GitHub Releases or install from source via Cargo. Available on crates.io as tuic-client."
+---
+
+`tuic-client` is the reference TUIC protocol client. It exposes a local SOCKS5 proxy and optional TCP/UDP port forwarding rules, relaying traffic to a `tuic-server` over QUIC with 0-RTT handshake. This page covers the two supported installation methods.
+
+## Prerequisites
+
+- A running `tuic-server` with a known address, user UUID, and password
+- For binary installs: a 64-bit Linux, macOS, or Windows system
+- For Cargo installs: Rust 1.85.0 or later (required minimum; `rustup update stable`)
+
+## Install
+
+<CodeGroup>
+
+```bash Prebuilt binary (Linux/macOS)
+# Replace X.Y.Z with the latest release version
+VERSION="1.7.2"
+
+# Linux x86_64
+curl -Lo tuic-client "https://github.com/Itsusinn/tuic/releases/download/v${VERSION}/tuic-client-x86_64-unknown-linux-gnu"
+chmod +x tuic-client
+sudo mv tuic-client /usr/local/bin/
+```
+
+```powershell Prebuilt binary (Windows)
+# Download from the GitHub Releases page
+# https://github.com/Itsusinn/tuic/releases
+# Save tuic-client-x86_64-pc-windows-msvc.exe as tuic-client.exe
+# and add the directory to your PATH
+```
+
+```bash Cargo (from crates.io)
+cargo install tuic-client
+```
+
+```bash Cargo (from source)
+git clone https://github.com/Itsusinn/tuic.git
+cd tuic
+cargo install --path tuic-client
+```
+
+</CodeGroup>
+
+<Note>
+  Prebuilt binaries for Linux (GNU and musl), Windows (MSVC), macOS, and FreeBSD are published to the [GitHub Releases page](https://github.com/Itsusinn/tuic/releases) for every tagged version. The `tuic-client` crate is also published to [crates.io](https://crates.io/crates/tuic-client).
+</Note>
+
+## Verify the installation
+
+```bash
+tuic-client --version
+```
+
+You should see output like `tuic-client 1.7.2`.
+
+## Run with a config file
+
+Once installed, `tuic-client` requires a configuration file passed with `-c`:
+
+```bash
+tuic-client -c /etc/tuic/config.toml
+```
+
+<Tip>
+  The client does not daemonize itself. Use `systemd`, `launchd`, or a process manager like `supervisor` to run it as a background service.
+</Tip>
+
+## Next step
+
+<Card title="Configure tuic-client" icon="sliders" href="/client/configuration">
+  Set up your server connection, SOCKS5 listener, and advanced QUIC options
+</Card>

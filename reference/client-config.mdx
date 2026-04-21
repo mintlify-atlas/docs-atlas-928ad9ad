@@ -1,0 +1,286 @@
+---
+title: "tuic-client configuration reference"
+description: "Complete reference for every tuic-client configuration option, covering relay, local SOCKS5, and port-forwarding settings with types and defaults."
+---
+
+The tuic-client configuration file is written in TOML (recommended), JSON5, or YAML. Specify the file at startup with `-c PATH`. The format is detected from the file extension; set the `TUIC_FORCE_TOML` environment variable to always parse as TOML, or set `TUIC_CONFIG_FORMAT` to `toml`, `json`, or `yaml` to override detection explicitly.
+
+## Top-level options
+
+<ParamField path="log_level" type="string">
+  Verbosity of log output. Accepts `"trace"`, `"debug"`, `"info"`, `"warn"`, `"error"`, `"off"`. Default: `"info"`.
+</ParamField>
+
+---
+
+## \[relay\]
+
+Controls the connection from the client to the TUIC server.
+
+<ParamField path="relay.server" type="string" required>
+  Server address in `host:port` format. Accepts hostnames, IPv4, and bracket-quoted IPv6 addresses (e.g. `"[::1]:443"`).
+</ParamField>
+
+<ParamField path="relay.uuid" type="string" required>
+  User UUID in hyphenated lowercase form (e.g. `"f0e12827-fe60-458c-8269-a05ccb0ff8da"`). Must match an entry in the server's `[users]` table.
+</ParamField>
+
+<ParamField path="relay.password" type="string" required>
+  User password. Must match the value associated with `uuid` on the server.
+</ParamField>
+
+<ParamField path="relay.ip" type="string">
+  Optional local IP address to bind for outgoing connections to the relay server. Default: not set (OS chooses).
+</ParamField>
+
+<ParamField path="relay.ipstack_prefer" type='"v4first" | "v6first" | "v4only" | "v6only"'>
+  IP version preference when resolving the server hostname. Legacy aliases `prefer_v4`, `prefer_v6`, `only_v4`, `only_v6` are also accepted. Default: `"v4first"`.
+</ParamField>
+
+<ParamField path="relay.certificates" type="string[]">
+  Paths to additional PEM certificate files to add to the trust store for server verification. Useful when the server uses a self-signed or private CA certificate. Default: `[]`.
+</ParamField>
+
+<ParamField path="relay.udp_relay_mode" type='"native" | "quic"'>
+  UDP relay strategy. `"native"` preserves UDP packet semantics (may be lossy). `"quic"` transports UDP payloads over QUIC streams for lossless delivery. Default: `"native"`.
+</ParamField>
+
+<ParamField path="relay.congestion_control" type='"bbr" | "bbr3" | "cubic" | "new_reno"'>
+  Congestion control algorithm for the QUIC connection. Default: `"bbr"`.
+</ParamField>
+
+<ParamField path="relay.alpn" type="string[]">
+  ALPN protocol identifiers sent during the TLS handshake (e.g. `["h3", "h2"]`). Default: `[]`.
+</ParamField>
+
+<ParamField path="relay.zero_rtt_handshake" type="boolean">
+  Attempt a QUIC 0-RTT connection handshake on reconnect. Only effective if the server also has `zero_rtt_handshake = true`. Default: `false`.
+</ParamField>
+
+<ParamField path="relay.disable_sni" type="boolean">
+  Do not send the Server Name Indication extension during the TLS handshake. Default: `false`.
+</ParamField>
+
+<ParamField path="relay.sni" type="string">
+  Override the SNI hostname sent during TLS handshake. When unset, the hostname from `server` is used. Default: not set.
+</ParamField>
+
+<ParamField path="relay.timeout" type="string (duration)">
+  Timeout for establishing a connection to the relay server. Default: `"8s"`.
+</ParamField>
+
+<ParamField path="relay.startup_mode" type='"lazy" | "eager" | "loop"'>
+  Controls when the initial relay connection is established.
+  - `"lazy"` — connect on the first incoming SOCKS5 or forwarding request; exit on failure.
+  - `"eager"` — connect at startup; exit immediately on failure.
+  - `"loop"` — connect on the first incoming request; retry indefinitely until success.
+
+  Default: `"lazy"`.
+</ParamField>
+
+<ParamField path="relay.heartbeat" type="string (duration)">
+  Interval at which keepalive heartbeat commands are sent to the server to prevent idle timeout. Default: `"3s"`.
+</ParamField>
+
+<ParamField path="relay.disable_native_certs" type="boolean">
+  Ignore the OS native certificate store when verifying the server's TLS certificate. Default: `false`.
+</ParamField>
+
+<ParamField path="relay.send_window" type="integer">
+  Maximum bytes the client may have in-flight before waiting for acknowledgements. Default: `16777216` (16 MiB).
+</ParamField>
+
+<ParamField path="relay.receive_window" type="integer">
+  Maximum bytes a remote stream may send without acknowledgement. Default: `8388608` (8 MiB).
+</ParamField>
+
+<ParamField path="relay.initial_mtu" type="integer">
+  Initial UDP payload size (bytes) before MTU discovery. Must be at least 1200. Default: `1200`.
+</ParamField>
+
+<ParamField path="relay.min_mtu" type="integer">
+  Minimum UDP payload size guaranteed by the network. Must be at least 1200 and ≤ `initial_mtu`. Default: `1200`.
+</ParamField>
+
+<ParamField path="relay.gso" type="boolean">
+  Enable Generic Segmentation Offload. Default: `true`.
+</ParamField>
+
+<ParamField path="relay.pmtu" type="boolean">
+  Enable Path MTU Discovery. Default: `true`.
+</ParamField>
+
+<ParamField path="relay.gc_interval" type="string (duration)">
+  Interval between garbage collection passes for stale UDP packet fragments. Default: `"3s"`.
+</ParamField>
+
+<ParamField path="relay.gc_lifetime" type="string (duration)">
+  Maximum age of a UDP packet fragment before it is discarded. Default: `"15s"`.
+</ParamField>
+
+<ParamField path="relay.skip_cert_verify" type="boolean">
+  Skip TLS certificate verification entirely. Intended for testing only. Default: `false`.
+</ParamField>
+
+<Warning>
+  Setting `skip_cert_verify = true` removes all TLS security guarantees and makes the connection vulnerable to man-in-the-middle attacks. Never use in production.
+</Warning>
+
+---
+
+## \[relay.proxy\]
+
+Optional SOCKS5 proxy through which the client reaches the relay server. Omit the entire sub-section to connect directly.
+
+<ParamField path="relay.proxy.server" type="string" required>
+  SOCKS5 proxy address in `host:port` format.
+</ParamField>
+
+<ParamField path="relay.proxy.username" type="string">
+  Optional SOCKS5 username for proxy authentication.
+</ParamField>
+
+<ParamField path="relay.proxy.password" type="string">
+  Optional SOCKS5 password for proxy authentication.
+</ParamField>
+
+<ParamField path="relay.proxy.udp_buffer_size" type="integer">
+  UDP packet buffer size in bytes used when tunnelling UDP through the SOCKS5 proxy. Default: `2048`.
+</ParamField>
+
+---
+
+## \[local\]
+
+Configuration for the local inbound listener. The client exposes a SOCKS5 server on this address.
+
+<ParamField path="local.server" type="string">
+  Local socket address for the SOCKS5 listener. Default: `"127.0.0.1:1080"`.
+</ParamField>
+
+<ParamField path="local.username" type="string">
+  Optional username for SOCKS5 authentication on the local listener. Default: not set (no authentication).
+</ParamField>
+
+<ParamField path="local.password" type="string">
+  Optional password for SOCKS5 authentication on the local listener. Default: not set.
+</ParamField>
+
+<ParamField path="local.dual_stack" type="boolean">
+  When set, explicitly enables (`true`) or disables (`false`) dual-stack mode on the local listener socket. Default: not set (OS default).
+</ParamField>
+
+<ParamField path="local.max_packet_size" type="integer">
+  Maximum UDP packet size (bytes) accepted by the local listener. Default: `1500`.
+</ParamField>
+
+---
+
+## \[\[local.tcp_forward\]\]
+
+Zero or more TCP port-forwarding rules. Each entry listens on a local address and forwards all TCP connections to a remote destination through the relay.
+
+<ParamField path="listen" type="string" required>
+  Local socket address to listen on (e.g. `"127.0.0.1:8080"`).
+</ParamField>
+
+<ParamField path="remote" type="string" required>
+  Destination address in `host:port` format. The relay server resolves and connects to this address.
+</ParamField>
+
+```toml
+[[local.tcp_forward]]
+listen = "127.0.0.1:8080"
+remote = "example.com:80"
+
+[[local.tcp_forward]]
+listen = "127.0.0.1:8443"
+remote = "example.com:443"
+```
+
+---
+
+## \[\[local.udp_forward\]\]
+
+Zero or more UDP port-forwarding rules. Each entry listens on a local address and forwards UDP datagrams to a remote destination through the relay.
+
+<ParamField path="listen" type="string" required>
+  Local socket address to listen on (e.g. `"127.0.0.1:5353"`).
+</ParamField>
+
+<ParamField path="remote" type="string" required>
+  Destination address in `host:port` format.
+</ParamField>
+
+<ParamField path="timeout" type="string (duration)">
+  Inactivity timeout after which the UDP forwarding session is closed. Default: `"60s"`.
+</ParamField>
+
+```toml
+[[local.udp_forward]]
+listen  = "127.0.0.1:5353"
+remote  = "8.8.8.8:53"
+timeout = "60s"
+```
+
+---
+
+## Complete example configuration
+
+<CodeGroup>
+```toml config.toml
+log_level = "info"
+
+[relay]
+server             = "example.com:443"
+uuid               = "00000000-0000-0000-0000-000000000000"
+password           = "your_password_here"
+# ip               = "192.168.1.100"
+ipstack_prefer     = "v4first"
+# certificates     = ["/path/to/cert.pem"]
+udp_relay_mode     = "native"
+congestion_control = "bbr"
+alpn               = []
+zero_rtt_handshake = false
+disable_sni        = false
+# sni              = "custom.example.com"
+timeout            = "8s"
+startup_mode       = "lazy"
+heartbeat          = "3s"
+disable_native_certs = false
+send_window        = 16777216
+receive_window     = 8388608
+initial_mtu        = 1200
+min_mtu            = 1200
+gso                = true
+pmtu               = true
+gc_interval        = "3s"
+gc_lifetime        = "15s"
+skip_cert_verify   = false
+
+# Optional: route relay connection through a SOCKS5 proxy
+# [relay.proxy]
+# server          = "127.0.0.1:1080"
+# username        = "proxy_user"
+# password        = "proxy_pass"
+# udp_buffer_size = 2048
+
+[local]
+server          = "127.0.0.1:1080"
+# username      = "socks_user"
+# password      = "socks_pass"
+dual_stack      = true
+max_packet_size = 1500
+
+# TCP port forwarding rules
+# [[local.tcp_forward]]
+# listen = "127.0.0.1:8080"
+# remote = "example.com:80"
+
+# UDP port forwarding rules
+# [[local.udp_forward]]
+# listen   = "127.0.0.1:5353"
+# remote   = "8.8.8.8:53"
+# timeout  = "60s"
+```
+</CodeGroup>

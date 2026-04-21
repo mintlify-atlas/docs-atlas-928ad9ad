@@ -1,0 +1,72 @@
+---
+title: "What is TUIC? 0-RTT proxy protocol over QUIC"
+description: "TUIC is a 0-RTT proxy protocol over QUIC with full-cone NAT UDP, automatic TLS via ACME, flexible ACL rules, and a built-in RESTful management API."
+---
+
+TUIC is a proxy protocol designed to minimize the additional handshake latency introduced by relaying, while keeping the protocol itself simple and easy to implement. When paired with QUIC, TUIC achieves zero round-trip TCP proxying, zero round-trip UDP proxying with Full Cone NAT, and 0-RTT authentication — all fully multiplexed over a single connection with bidirectional congestion control and optional connection migration.
+
+## Protocol capabilities
+
+TUIC is built on top of [QUIC](https://en.wikipedia.org/wiki/QUIC), which means it inherits QUIC's advantages alongside its own protocol features:
+
+- **0-RTT TCP proxying** — no extra handshake round-trip for relayed TCP connections
+- **0-RTT UDP proxying** with [Full Cone NAT](https://www.rfc-editor.org/rfc/rfc3489#section-5) — UDP traffic traverses NAT without the restrictions of symmetric NAT
+- **0-RTT authentication** — credentials are verified without additional round trips
+- **Two UDP relay modes** — `native` preserves native UDP behavior; `quic` transfers UDP packets losslessly over QUIC streams
+- **Full multiplexing** — all streams share a single QUIC connection without head-of-line blocking
+- **Connection migration** — connections survive network changes (e.g., switching from Wi-Fi to mobile data)
+
+<Note>
+  The TUIC protocol specification is intentionally kept minimal. The core protocol concept is license-free — you can implement, modify, and redistribute it without restriction, even commercially.
+</Note>
+
+## Repository structure
+
+This repository contains four crates:
+
+| Crate | Type | Purpose |
+|---|---|---|
+| `tuic` (tuic-core) | Library | Protocol abstraction, marshalling, and model definitions |
+| `tuic-quinn` | Library | Thin layer on top of [quinn](https://github.com/quinn-rs/quinn) providing TUIC over QUIC |
+| `tuic-server` | Binary | Minimalistic reference server implementation |
+| `tuic-client` | Binary | Minimalistic reference client implementation |
+
+The library crates (`tuic` and `tuic-quinn`) are designed so that other implementations can build on the protocol without depending on the reference binaries.
+
+## Enhancements in this fork
+
+This repository is a fork of the original [tuic-protocol/tuic](https://github.com/tuic-protocol/tuic) with significant production-ready additions.
+
+**TLS and security**
+
+- Automatic SSL/TLS certificate provisioning via ACME (Let's Encrypt), including certificates for bare IP addresses
+- Self-signed certificate generation with `self_sign = true`
+- Certificate auto hot-reload for zero-downtime updates
+- `skip_cert_verify` option for testing against self-signed servers
+
+**Server features**
+
+- ACL (Access Control List) with per-rule outbound policies (`direct`, `drop`, custom SOCKS5 outbounds) and optional traffic hijacking
+- RESTful API for traffic statistics, online client listing, and user kicking
+- SOCKS5 outbound proxy support
+- Network interface binding and private/LAN address filtering
+
+**Performance**
+
+- BBR3 congestion control algorithm support
+- JEMalloc allocator for improved memory management
+- AWS-LC-RS crypto provider for better cryptographic throughput
+
+**Infrastructure**
+
+- Multi-platform Docker images (`linux/amd64`, `linux/arm64`) published to GHCR and Docker Hub
+- Cross-compilation CI/CD for Linux (GNU/musl), Windows (MSVC), macOS, and FreeBSD
+
+<CardGroup cols={2}>
+  <Card title="Install the server" icon="server" href="/server/installation">
+    Download a prebuilt binary or install via Cargo, then generate a starter config
+  </Card>
+  <Card title="Install the client" icon="laptop" href="/client/installation">
+    Connect to your TUIC server using the reference client over SOCKS5
+  </Card>
+</CardGroup>

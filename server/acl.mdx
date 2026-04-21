@@ -1,0 +1,210 @@
+---
+title: "Access control list rules for tuic-server outbound"
+description: "Write tuic-server ACL rules to allow, block, redirect, or reroute traffic by IP address, CIDR range, domain, wildcard domain, port, and protocol."
+---
+
+The `tuic-server` Access Control List (ACL) lets you decide what happens to each outbound connection the server opens on behalf of a client. Rules are evaluated in order and the first matching rule wins. When no rule matches, the `[experimental]` defaults (`drop_loopback` and `drop_private`) apply; all other traffic is forwarded through the `default` outbound.
+
+## Rule syntax
+
+Each rule has the form:
+
+```text
+<outbound> <address> [<ports>] [<hijack>]
+```
+
+| Field | Required | Description |
+|---|---|---|
+| `outbound` | Yes | Outbound name: `direct`, `default`, `drop`, or a custom named outbound |
+| `address` | Yes | Target address (see address types below) |
+| `ports` | No | Port filter (see port syntax below) |
+| `hijack` | No | Redirect matching traffic to this IP address instead |
+
+## Address types
+
+| Type | Example | Matches |
+|---|---|---|
+| IPv4 address | `8.8.8.8` | Exact IPv4 address |
+| IPv6 address | `2001:db8::1` | Exact IPv6 address |
+| IPv4 CIDR | `10.0.0.0/8` | Any address in the subnet |
+| IPv6 CIDR | `2001:db8::/32` | Any address in the subnet |
+| Domain | `example.com` | Exact domain name |
+| Wildcard domain | `*.example.com` | Any subdomain of `example.com` |
+| `localhost` | `localhost` | Loopback addresses: `127.0.0.0/8`, `::1` |
+| `private` | `private` | All RFC 1918 and link-local ranges (see below) |
+| `*` (any) | `*` | Every address |
+
+The `private` keyword covers:
+- IPv4: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`
+- IPv6: `fc00::/7` (unique local), `fe80::/10` (link-local)
+
+## Port syntax
+
+Ports are a comma-separated list of entries. Each entry can optionally be prefixed with a protocol (`tcp/` or `udp/`). Ranges use a `-` separator.
+
+| Example | Matches |
+|---|---|
+| `80` | TCP or UDP port 80 |
+| `tcp/80` | TCP port 80 only |
+| `udp/53` | UDP port 53 only |
+| `tcp/80,tcp/443` | TCP ports 80 and 443 |
+| `udp/10000-20000` | UDP ports 10000 through 20000 |
+| `udp/53,tcp/80,tcp/443` | Multiple entries, mixed protocols |
+
+Omitting ports matches all ports.
+
+## Outbound names
+
+| Name | Behaviour |
+|---|---|
+| `drop` | Silently drop the connection (built-in, case-insensitive) |
+| `default` | Use the `[outbound.default]` rule defined in configuration |
+| Any other name | Use the matching named rule under `[outbound.<name>]`, e.g. `"direct"`, `"through_socks5"` |
+
+<Note>
+  `"drop"` is the only hardcoded built-in outbound name. Every other value, including `"direct"`, must correspond to a named rule under `[outbound]`. The `"default"` name specifically maps to `[outbound.default]`.
+</Note>
+
+## Two config formats
+
+You can write ACL rules in either of two formats in the same TOML config file. Pick the one that suits your style.
+
+### Format 1: Array-of-tables
+
+Each rule is a TOML `[[acl]]` table with named fields. This format is verbose but easy to read and comment.
+
+```toml
+# Drop all connections to loopback
+[[acl]]
+addr     = "localhost"
+outbound = "drop"
+
+# Drop connections to private/LAN addresses
+[[acl]]
+addr     = "private"
+outbound = "drop"
+
+# Redirect DNS queries for 8.8.4.4 to 1.1.1.1
+[[acl]]
+addr     = "8.8.4.4"
+ports    = "udp/53"
+outbound = "default"
+hijack   = "1.1.1.1"
+
+# Block all subdomains of ads.example.com
+[[acl]]
+addr     = "*.ads.example.com"
+outbound = "drop"
+
+# Allow web traffic to *.google.com only
+[[acl]]
+addr     = "*.google.com"
+ports    = "tcp/80,tcp/443"
+outbound = "direct"
+```
+
+### Format 2: Multiline string
+
+A more concise alternative: set `acl` to a multi-line string where each non-comment line is a rule. Comments start with `#`.
+
+```toml
+acl = '''
+# Block loopback and private addresses
+drop localhost
+drop private
+
+# Redirect DNS for 8.8.4.4 to 1.1.1.1
+default 8.8.4.4 udp/53 1.1.1.1
+
+# Block ad subdomains
+drop *.ads.example.com
+
+# Allow web traffic to Google subdomains
+direct *.google.com tcp/80,tcp/443
+
+# Route all remaining traffic through the default outbound
+default *
+'''
+```
+
+<Note>
+  The two formats cannot be combined in the same config file. Use either `acl = '''...'''` or one or more `[[acl]]` tables.
+</Note>
+
+## Common patterns
+
+### Block localhost and private networks
+
+Prevent clients from using the proxy to reach internal services:
+
+```toml
+acl = '''
+drop localhost
+drop private
+'''
+```
+
+<Tip>
+  The `[experimental]` section has `drop_loopback = true` and `drop_private = true` as defaults, which apply when no ACL rule matches. Explicit ACL rules take precedence and let you open exceptions.
+</Tip>
+
+### Redirect DNS queries
+
+Force DNS queries destined for a specific resolver through a different one:
+
+```toml
+[[acl]]
+addr     = "8.8.4.4"
+ports    = "udp/53"
+outbound = "default"
+hijack   = "1.1.1.1"
+```
+
+### Wildcard domain rules
+
+Block all subdomains of a domain:
+
+```toml
+[[acl]]
+addr     = "*.tracking.example.com"
+outbound = "drop"
+```
+
+### Port range rules
+
+Allow only UDP ports in the game server range:
+
+```toml
+[[acl]]
+addr     = "203.0.113.50"
+ports    = "udp/27000-27050"
+outbound = "direct"
+```
+
+### Named outbound
+
+Route traffic matching a rule through a SOCKS5 proxy instead of direct:
+
+```toml
+[[acl]]
+addr     = "*.corp.example.com"
+outbound = "through_socks5"
+```
+
+This references `[outbound.through_socks5]` in the `[outbound]` section:
+
+```toml
+[outbound.through_socks5]
+type     = "socks5"
+addr     = "127.0.0.1:1080"
+```
+
+## Interaction with `[outbound]`
+
+Named outbounds referenced in ACL rules must have a corresponding entry under `[outbound]`. If you reference a name that has no entry, the server will log a warning and treat the connection as if no rule matched.
+
+The `default` rule (`[outbound.default]`) is the fallback outbound used when:
+- An ACL rule specifies `outbound = "default"`, or
+- No ACL rule matches the connection (and `drop_loopback`/`drop_private` do not apply).
+
+See the [configuration page](/server/configuration) for the full `[outbound]` reference.

@@ -1,0 +1,129 @@
+---
+title: "Itsusinn/tuic fork enhancements over upstream"
+description: "What this fork (Itsusinn/tuic v1.7.2) adds over the original tuic-protocol/tuic: CI/CD, TLS, performance, server, and client improvements."
+---
+
+This page documents the enhancements that distinguish [Itsusinn/tuic](https://github.com/Itsusinn/tuic) (current version **1.7.2**) from the original [tuic-protocol/tuic](https://github.com/tuic-protocol/tuic) reference repository. The wire protocol itself is unchanged; all additions are at the application and infrastructure layers.
+
+For a general introduction to the project see the [introduction page](/introduction).
+
+---
+
+## Infrastructure & CI/CD
+
+<AccordionGroup>
+  <Accordion title="Docker image builds with multi-platform support">
+    Official Docker images are published to both GitHub Container Registry (`ghcr.io/itsusinn/tuic-server`) and Docker Hub (`docker.io/itsusinn/tuic-server`). Images are built for `linux/amd64` and `linux/arm64`. The container defaults to `-d /etc/tuic`, allowing a config directory to be mounted at that path.
+  </Accordion>
+  <Accordion title="Cross-compilation via cross-rs">
+    The CI/CD pipeline uses [cross-rs](https://github.com/cross-rs/cross) to produce release binaries for a broad matrix of targets including Linux (GNU and musl), Windows (MSVC), macOS, and FreeBSD. Reusable workflow definitions keep the pipeline DRY across targets.
+  </Accordion>
+  <Accordion title="Rust edition 2024">
+    The workspace adopts Rust edition 2024 (`edition = "2024"` in `Cargo.toml`), enabling the latest language features and lints. The minimum supported Rust version is 1.85.0.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## TLS & Security
+
+<AccordionGroup>
+  <Accordion title="Automatic ACME / Let's Encrypt certificate provisioning">
+    Set `[tls] auto_ssl = true` and `hostname = "your.domain.com"` to have the server obtain and renew a Let's Encrypt certificate automatically via the HTTP-01 challenge. Uniquely, IP address certificates are also supported in addition to domain certificates. Port 80 must be reachable from the public internet for challenge validation.
+  </Accordion>
+  <Accordion title="Self-signed certificate support">
+    Set `[tls] self_sign = true` to generate a self-signed certificate at startup without any external tooling. Clients trust it by adding the certificate path to `relay.certificates`.
+  </Accordion>
+  <Accordion title="Certificate hot-reload">
+    TLS certificates are monitored for changes on disk. When an updated certificate is detected, the server reloads it without dropping existing connections, enabling zero-downtime certificate renewal.
+  </Accordion>
+  <Accordion title="skip_cert_verify on the client">
+    The `relay.skip_cert_verify` option on the client disables TLS certificate verification entirely. This was added to support testing scenarios where a self-signed certificate is used but distributing it to clients is inconvenient.
+  </Accordion>
+  <Accordion title="AWS-LC-RS crypto provider">
+    The server uses AWS-LC-RS as its TLS crypto provider instead of ring, offering improved performance on supported platforms.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Performance & Stability
+
+<AccordionGroup>
+  <Accordion title="JEMalloc allocator">
+    On Linux, the server links against jemalloc for better memory allocation performance and reduced fragmentation under sustained connection load.
+  </Accordion>
+  <Accordion title="BBR3 congestion control">
+    A custom fork of quinn (`Tipuch/quinn`, `bbrv3` branch) and `quinn-congestions` adds BBRv3 support. Select it with `controller = "bbr3"` in `[quic.congestion_control]`. BBRv3 typically achieves higher throughput and lower latency than BBRv1 or CUBIC on lossy links.
+  </Accordion>
+  <Accordion title="Aggressive max_concurrent_streams">
+    The server uses a more permissive `max_concurrent_streams` strategy compared to the original, allowing more parallel streams per connection before back-pressure kicks in.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Server Features
+
+<AccordionGroup>
+  <Accordion title="ACL — Access Control List">
+    A flexible rule engine that evaluates each proxied connection against an ordered list of rules before establishing the outbound connection. Rules match on address (IP, CIDR, domain, wildcard domain, `localhost`, `private`), optional port/protocol specifiers, and map to an outbound action. Two syntax formats are supported: TOML array-of-tables (`[[acl]]`) and a compact multiline string (`acl = '''...'''`).
+
+    See the [server configuration reference](/reference/server-config#acl--acl-multiline) for the full rule syntax.
+  </Accordion>
+  <Accordion title="SOCKS5 outbound proxy">
+    Named outbound rules can route traffic through a SOCKS5 proxy by setting `type = "socks5"` and providing `addr`, and optionally `username` / `password`. This enables chaining TUIC behind an existing proxy infrastructure.
+  </Accordion>
+  <Accordion title="RESTful management API">
+    An optional HTTP server (enabled via `[restful]`) exposes endpoints for monitoring connected clients, querying traffic statistics, resetting counters, and kicking users. All endpoints require a bearer token.
+  </Accordion>
+  <Accordion title="Network interface binding">
+    Direct outbound rules support binding to a specific IPv4 address (`bind_ipv4`), IPv6 address (`bind_ipv6`), or network interface (`bind_device`). Multiple addresses can be listed; one is chosen randomly per connection.
+  </Accordion>
+  <Accordion title="Loopback and private address protection">
+    The `[experimental]` section adds two safety flags, both enabled by default:
+    - `drop_loopback = true` — rejects connections to `127.0.0.1` / `::1` when no ACL rule explicitly permits them.
+    - `drop_private = true` — rejects connections to RFC 1918 / ULA private ranges when no ACL rule explicitly permits them.
+
+    These prevent clients from using the server as a pivot into the server's local network.
+  </Accordion>
+  <Accordion title="Config format auto-detection">
+    The server accepts TOML, JSON5, and YAML configuration files. When using Docker with a mounted config directory, format is inferred from file content rather than extension (`IN_DOCKER=true`). The `TUIC_FORCE_TOML` and `TUIC_CONFIG_FORMAT` environment variables provide explicit overrides.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Client Features
+
+<AccordionGroup>
+  <Accordion title="TCP port forwarding">
+    One or more `[[local.tcp_forward]]` entries forward all connections on a local address to a fixed remote destination through the relay. This is useful for exposing a specific remote service locally without running a full SOCKS5 client.
+  </Accordion>
+  <Accordion title="UDP port forwarding">
+    `[[local.udp_forward]]` entries do the same for UDP datagrams, with a configurable inactivity `timeout` per session. A common use case is forwarding a local DNS port to a remote resolver.
+  </Accordion>
+  <Accordion title="Local socket rebinding">
+    The client implements local socket rebinding for improved reliability when the local network interface changes, such as during a network switch on a laptop.
+  </Accordion>
+  <Accordion title="SOCKS5 proxy for relay connection">
+    The `[relay.proxy]` sub-section routes the client-to-server QUIC connection itself through a SOCKS5 proxy, enabling use in environments where direct outbound UDP is blocked.
+  </Accordion>
+  <Accordion title="startup_mode">
+    The `relay.startup_mode` option gives fine-grained control over connection lifecycle:
+    - `"lazy"` (default) — connect on first use, exit on failure.
+    - `"eager"` — connect at startup, exit on failure.
+    - `"loop"` — connect on first use, retry indefinitely.
+  </Accordion>
+</AccordionGroup>
+
+---
+
+## Current version
+
+| Component | Version |
+|-----------|---------|
+| Workspace | **1.7.2** |
+| Protocol | **0x05** |
+| Rust edition | 2024 |
+| Minimum Rust | 1.85.0 |

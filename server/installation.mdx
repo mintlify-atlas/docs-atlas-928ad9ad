@@ -1,0 +1,128 @@
+---
+title: "Install tuic-server on Linux, macOS, Windows, FreeBSD"
+description: "Download a prebuilt binary, install with Cargo, or build from source. Supports Linux GNU/musl, Windows MSVC, macOS (Intel and Apple Silicon), and FreeBSD."
+---
+
+`tuic-server` is distributed as a single statically linked binary with no runtime dependencies. You can get it in three ways: download a prebuilt release, install it with Cargo, or build from source.
+
+## Supported platforms
+
+Prebuilt binaries are published for the following targets:
+
+| Platform | Target triple |
+|---|---|
+| Linux GNU (x86-64) | `x86_64-unknown-linux-gnu` |
+| Linux musl (x86-64) | `x86_64-unknown-linux-musl` |
+| Linux GNU (aarch64) | `aarch64-unknown-linux-gnu` |
+| Linux musl (aarch64) | `aarch64-unknown-linux-musl` |
+| Windows MSVC (x86-64) | `x86_64-pc-windows-msvc` |
+| macOS (x86-64) | `x86_64-apple-darwin` |
+| macOS (Apple Silicon) | `aarch64-apple-darwin` |
+| FreeBSD (x86-64) | `x86_64-unknown-freebsd` |
+
+## Install
+
+<Steps>
+  <Step title="Choose an installation method">
+    Pick the method that fits your environment. Prebuilt binaries are the fastest option. Cargo install is useful if you already have a Rust toolchain. Building from source gives you the most control.
+  </Step>
+
+  <Step title="Download or build the binary">
+
+<CodeGroup>
+
+```bash Prebuilt binary (Linux/macOS)
+# Download the latest release for your platform from GitHub Releases:
+# https://github.com/Itsusinn/tuic/releases
+
+# Example: Linux x86-64 musl (replace the version and filename as needed)
+curl -LO https://github.com/Itsusinn/tuic/releases/latest/download/tuic-server-x86_64-unknown-linux-musl
+
+# Make it executable
+chmod +x tuic-server-x86_64-unknown-linux-musl
+
+# Optionally move it onto your PATH
+sudo mv tuic-server-x86_64-unknown-linux-musl /usr/local/bin/tuic-server
+```
+
+```powershell Prebuilt binary (Windows)
+# Download the latest release from GitHub Releases:
+# https://github.com/Itsusinn/tuic/releases
+#
+# Look for: tuic-server-x86_64-pc-windows-msvc.exe
+# Save it somewhere on your PATH, e.g. C:\tools\tuic-server.exe
+```
+
+```bash Cargo install
+# Requires Rust 1.85.0+ and a working C toolchain
+cargo install --git https://github.com/Itsusinn/tuic.git tuic-server
+```
+
+```bash Build from source
+# Clone the repository
+git clone https://github.com/Itsusinn/tuic.git
+cd tuic
+
+# Build in release mode
+cargo build --release -p tuic-server
+
+# The binary is at:
+# target/release/tuic-server  (Linux/macOS)
+# target\release\tuic-server.exe  (Windows)
+```
+
+</CodeGroup>
+
+  </Step>
+
+  <Step title="Verify the installation">
+
+```bash
+tuic-server --version
+```
+
+You should see the version string printed to stdout.
+
+  </Step>
+
+  <Step title="Generate a starter config">
+
+```bash
+tuic-server --init
+```
+
+This writes a fully annotated `config.toml` to the current directory. Edit it before starting the server.
+
+<Note>
+  `--init` aborts if `config.toml` already exists in the current directory to prevent accidental overwrites.
+</Note>
+
+  </Step>
+</Steps>
+
+## CLI flags
+
+Once installed, `tuic-server` accepts the following top-level flags:
+
+| Flag | Short | Description |
+|---|---|---|
+| `--config PATH` | `-c` | Path to a config file (`.toml`, `.json`, `.json5`, `.yaml`, `.yml`) |
+| `--dir DIR` | `-d` | Directory to search for a config file (picks the first alphabetically) |
+| `--init` | | Generate an example `config.toml` in the current directory |
+| `--version` | `-V` | Print version |
+| `--help` | `-h` | Print help |
+
+<Tip>
+  The `--dir` flag is designed for Docker deployments. When running inside a container, mount your config directory to `/etc/tuic` and pass `-d /etc/tuic`.
+</Tip>
+
+## Next steps
+
+<CardGroup cols={2}>
+  <Card title="Configure tuic-server" icon="sliders" href="/server/configuration">
+    Set up your users, networking options, and QUIC parameters.
+  </Card>
+  <Card title="TLS configuration" icon="lock" href="/server/tls">
+    Provide a certificate, enable self-sign, or use automatic ACME provisioning.
+  </Card>
+</CardGroup>

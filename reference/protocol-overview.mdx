@@ -1,0 +1,119 @@
+---
+title: "TUIC protocol: commands, addressing, and UDP modes"
+description: "Architecture and design of the TUIC 0-RTT proxy protocol: command types, UDP relay modes, authentication model, QUIC features, and the four-crate workspace."
+---
+
+TUIC is a proxy protocol designed to minimize the additional handshake latency introduced by relaying traffic. Its primary goal is to keep the protocol itself simple enough to implement from scratch, while leveraging the capabilities of QUIC to eliminate round trips wherever possible. The current protocol version is **0x05**.
+
+## Design goals
+
+- **Minimize relay handshake latency.** Proxy connections are established with 0 additional round trips on top of the underlying transport.
+- **Simplicity.** The wire format is compact and the command set is small, making alternative implementations straightforward.
+- **Transport independence.** TUIC is designed for QUIC but the command layer is logically separable and could be carried over TCP or any other ordered stream transport.
+
+## QUIC capabilities used
+
+When deployed over QUIC, TUIC gains the following properties from the transport layer directly:
+
+| Feature | Description |
+|---------|-------------|
+| **0-RTT TCP proxying** | A new proxied TCP connection can be opened inside an already-established QUIC connection with no additional round trips. |
+| **0-RTT UDP proxying** | UDP relay sessions are opened with full-cone NAT characteristics and no additional handshake. |
+| **0-RTT authentication** | The authentication command is sent in the first stream of the QUIC connection, overlapping with the handshake. |
+| **Full multiplexing** | All proxy streams and UDP sessions share a single QUIC connection; head-of-line blocking is eliminated. |
+| **Bidirectional congestion control** | User-space congestion control (BBR, BBR3, CUBIC, NewReno) runs independently in each direction. |
+| **Optional 0-RTT connection handshake** | QUIC 0-RTT session resumption can be enabled to skip the TLS handshake on reconnect. |
+| **Connection migration** | The client can change its network address without tearing down the proxy connection. |
+
+## Protocol version
+
+The wire protocol version constant is defined in `tuic-core/src/protocol/mod.rs`:
+
+```rust
+pub const VERSION: u8 = 0x05;
+```
+
+Every command header begins with this byte, allowing the server to reject incompatible clients immediately.
+
+## Command types
+
+The protocol defines five command types, each sent as a `Header` on a QUIC stream or datagram:
+
+| Code | Name | Purpose |
+|------|------|---------|
+| `0x00` | `Authenticate` | Proves identity using UUID + password. Sent once per QUIC connection. |
+| `0x01` | `Connect` | Requests a TCP relay to a target address. Carries the TCP stream payload. |
+| `0x02` | `Packet` | Carries one fragment of a UDP packet to or from the relay target. |
+| `0x03` | `Dissociate` | Terminates a UDP relay session identified by an association ID. |
+| `0x04` | `Heartbeat` | Keeps the QUIC connection alive with no data payload. |
+
+The `Header` wire layout is:
+
+```text
++-----+------+----------+
+| VER | TYPE |   OPT    |
++-----+------+----------+
+|  1  |  1   | Variable |
++-----+------+----------+
+```
+
+## Authentication model
+
+Authentication is UUID-based. Each user is identified by a UUID and a shared password. After the QUIC connection is established, the client sends an `Authenticate` command containing the UUID and an HMAC of the connection token. The server verifies this within the `auth_timeout` window.
+
+- There is no session token or key exchange beyond TLS.
+- Multiple users can share one server; each has an independent UUID+password pair.
+- The server maintains per-user traffic statistics accessible via the RESTful API.
+
+## UDP relay modes
+
+Two modes are available for relaying UDP traffic:
+
+<AccordionGroup>
+  <Accordion title="native mode">
+    UDP packets are relayed preserving the unreliable, unordered characteristics of native UDP. Packets may be dropped or reordered in transit, matching the behavior a client would see on a direct connection. This mode is suitable for most UDP applications including DNS, gaming, and media streaming.
+  </Accordion>
+  <Accordion title="quic mode">
+    UDP packets are carried inside QUIC streams, giving them reliable, ordered delivery. The trade-off is higher latency and the loss of native UDP semantics. Use this when the destination application cannot tolerate packet loss, but only when the additional ordering guarantees are truly required.
+  </Accordion>
+</AccordionGroup>
+
+## Address encoding
+
+The `Address` field in `Connect` and `Packet` commands uses a compact variable-length encoding:
+
+| Type byte | Meaning |
+|-----------|---------|
+| `0x00` | Fully-qualified domain name (1-byte length prefix + domain + 2-byte port) |
+| `0x01` | IPv4 address (4 bytes + 2-byte port) |
+| `0x02` | IPv6 address (16 bytes + 2-byte port) |
+| `0xff` | None (used in non-first `Packet` fragments) |
+
+## Crate workspace
+
+This repository contains four crates:
+
+<AccordionGroup>
+  <Accordion title="tuic (tuic-core)">
+    The protocol library. Defines the wire format (`Header`, `Address`, `Authenticate`, `Connect`, `Packet`, `Dissociate`, `Heartbeat`), synchronous and asynchronous marshalling/unmarshalling, and shared utility types (`CongestionControl`, `StackPrefer`, `UdpRelayMode`). Designed to be embedded in any TUIC implementation.
+  </Accordion>
+  <Accordion title="tuic-quinn">
+    A thin integration layer on top of the [quinn](https://github.com/quinn-rs/quinn) QUIC library. Provides higher-level TUIC connection and stream types built from quinn primitives, reducing boilerplate for implementors using quinn.
+  </Accordion>
+  <Accordion title="tuic-server">
+    The reference server binary. Implements the full server-side protocol including ACL evaluation, outbound routing (direct and SOCKS5), ACME certificate provisioning, and the RESTful management API.
+  </Accordion>
+  <Accordion title="tuic-client">
+    The reference client binary. Exposes a local SOCKS5 listener and optional TCP/UDP port-forwarding rules, connecting upstream to a tuic-server instance.
+  </Accordion>
+</AccordionGroup>
+
+## Protocol specification
+
+The full TUIC protocol specification, including precise byte-level layout for every command, is maintained in the upstream specification document:
+
+[SPEC.md on proxy-rs/wind](https://github.com/proxy-rs/wind/blob/main/crates/wind-tuic/SPEC.md)
+
+<Note>
+  The specification describes the protocol as it stands at version 0x05. This fork implements the spec faithfully; the enhancements in this repository are at the application layer (ACL, ACME, RESTful API, etc.) and do not change the wire protocol.
+</Note>

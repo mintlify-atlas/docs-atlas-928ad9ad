@@ -1,0 +1,175 @@
+---
+title: "Deploy tuic-server using Docker and Docker Compose"
+description: "Run tuic-server using the official images on GitHub Container Registry or Docker Hub, with volume mounts for config and TLS certificate files."
+---
+
+`tuic-server` is published as a minimal container image with no external dependencies. The image entrypoint runs `tuic-server -d /etc/tuic`, so you only need to mount your configuration directory to `/etc/tuic` to get started.
+
+## Images
+
+Two registries host identical images:
+
+| Registry | Image |
+|---|---|
+| GitHub Container Registry | `ghcr.io/itsusinn/tuic-server:latest` |
+| Docker Hub | `docker.io/itsusinn/tuic-server:latest` |
+
+Use whichever registry is faster or more convenient in your environment.
+
+## Quick start with `docker run`
+
+```bash
+docker run --name tuic-server \
+  --restart always \
+  --network host \
+  -v /path/to/config.toml:/etc/tuic/config.toml:ro \
+  -v /path/to/cert.pem:/path/to/cert.pem:ro \
+  -v /path/to/key.pem:/path/to/key.pem:ro \
+  -dit ghcr.io/itsusinn/tuic-server:latest
+```
+
+<Note>
+  `--network host` is strongly recommended. QUIC uses UDP, and Docker's userspace NAT for UDP can significantly hurt performance. Host networking gives the container direct access to the host's network stack.
+</Note>
+
+### How the container finds your config
+
+The default entrypoint is equivalent to:
+
+```bash
+tuic-server -d /etc/tuic
+```
+
+The `-d` flag searches `/etc/tuic` for the first alphabetically sorted file with a recognised extension (`.toml`, `.json`, `.json5`, `.yaml`, `.yml`). Mount a single file or an entire directory — either works.
+
+```bash
+# Mount a single config file
+-v /path/to/config.toml:/etc/tuic/config.toml:ro
+
+# Mount a whole config directory
+-v /path/to/config/:/etc/tuic/:ro
+```
+
+## Docker Compose
+
+Save the following as `docker-compose.yml` alongside your `config.toml`, `cert.pem`, and `key.pem`:
+
+```yaml
+services:
+  tuic:
+    image: ghcr.io/itsusinn/tuic-server:latest
+    # Alternatively: image: docker.io/itsusinn/tuic-server:latest
+    restart: always
+    container_name: tuic
+    network_mode: host
+    volumes:
+      - ./config.toml:/etc/tuic/config.toml:ro
+      # To mount a whole directory instead:
+      # - ./config:/etc/tuic:ro
+      - ./cert.pem:/etc/tuic/cert.pem:ro
+      - ./key.pem:/etc/tuic/key.pem:ro
+```
+
+Start it with:
+
+```bash
+docker compose up -d
+```
+
+View logs:
+
+```bash
+docker compose logs -f tuic
+```
+
+## Volume mount strategy
+
+### Config file only
+
+The simplest setup: mount a single file into `/etc/tuic/`.
+
+```yaml
+volumes:
+  - ./config.toml:/etc/tuic/config.toml:ro
+```
+
+### Config directory
+
+Mount a directory to manage multiple environments or rotate configs without rebuilding the container.
+
+```yaml
+volumes:
+  - ./config:/etc/tuic:ro
+```
+
+The server picks the first file alphabetically, so name your primary config `a_config.toml` or `config.toml` to control selection.
+
+### Certificate files
+
+Certificate paths in `config.toml` are resolved relative to `data_dir`. The easiest approach is to set `data_dir = "/etc/tuic"` and use relative paths in the TLS section:
+
+```toml
+data_dir = "/etc/tuic"
+
+[tls]
+certificate = "cert.pem"
+private_key = "key.pem"
+```
+
+Then mount the certificate files into `/etc/tuic/`:
+
+```yaml
+volumes:
+  - ./config.toml:/etc/tuic/config.toml:ro
+  - ./cert.pem:/etc/tuic/cert.pem:ro
+  - ./key.pem:/etc/tuic/key.pem:ro
+```
+
+## The `IN_DOCKER` environment variable
+
+When `IN_DOCKER=true` is set, `tuic-server` switches from extension-based format detection to content-based format inference. This is useful when your config file has a non-standard extension or no extension at all.
+
+```yaml
+environment:
+  - IN_DOCKER=true
+```
+
+With `IN_DOCKER=true`, the server inspects the file content to determine whether it is TOML, JSON5, or YAML instead of relying on the filename. You can still override this with `TUIC_CONFIG_FORMAT` or `TUIC_FORCE_TOML`.
+
+<Tip>
+  The official image sets `IN_DOCKER=true` automatically, so format inference is already active when you use the published images.
+</Tip>
+
+## Environment variables reference
+
+| Variable | Description |
+|---|---|
+| `IN_DOCKER` | Set to `true` to enable content-based format inference instead of extension-based detection |
+| `TUIC_FORCE_TOML` | Force TOML parsing regardless of file extension or content |
+| `TUIC_CONFIG_FORMAT` | Explicitly set format: `toml`, `json`, `json5`, `yaml`, or `yml` |
+
+## Using ACME inside Docker
+
+If you enable `auto_ssl = true` in your TLS config, the server needs to bind port 80 for the HTTP-01 ACME challenge. Add port 80 to your Docker run command or Compose file when not using host networking:
+
+```yaml
+ports:
+  - "80:80"
+  - "443:443/udp"
+```
+
+With `network_mode: host` (the default recommendation), no port mapping is needed because the container shares the host's network stack directly.
+
+<Warning>
+  Let's Encrypt's HTTP-01 challenge requires the server to be publicly reachable on port 80. Make sure your firewall and DNS records are configured before enabling `auto_ssl`.
+</Warning>
+
+## Updating the image
+
+```bash
+# Pull the latest image
+docker pull ghcr.io/itsusinn/tuic-server:latest
+
+# Restart the container with the new image
+docker compose up -d --pull always
+```

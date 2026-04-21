@@ -1,97 +1,67 @@
 ---
-title: "Introduction"
-description: "Welcome to the new home for your documentation"
+title: "TUIC: 0-RTT Proxy Protocol over QUIC"
+description: "TUIC is a high-performance proxy protocol built on QUIC, delivering 0-RTT TCP and UDP proxying with automatic TLS, ACL rules, and a built-in management API."
 ---
 
-## Setting up
+TUIC is a delicately-tuned 0-RTT proxy protocol designed to minimize handshake latency while keeping the protocol simple and efficient. Built on top of QUIC, it achieves zero round-trip TCP and UDP proxying with full multiplexing, connection migration, and bidirectional congestion control — all without the overhead of traditional proxy protocols.
 
-Get your documentation site up and running in minutes.
-
-<Card
-  title="Start here"
-  icon="rocket"
-  href="/quickstart"
-  horizontal
->
-  Follow our three step quickstart guide.
-</Card>
-
-## Make it yours
-
-Design a docs site that looks great and empowers your users.
-
-<Columns cols={2}>
-  <Card
-    title="Edit locally"
-    icon="pen-to-square"
-    href="/development"
-  >
-    Edit your docs locally and preview them in real time.
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Get TUIC server and client running in minutes with a minimal configuration
   </Card>
-  <Card
-    title="Customize your site"
-    icon="palette"
-    href="/essentials/settings"
-  >
-    Customize the design and colors of your site to match your brand.
+  <Card title="Server Setup" icon="server" href="/server/installation">
+    Install and configure the TUIC server with TLS, users, and ACL rules
   </Card>
-    <Card
-    title="Set up navigation"
-    icon="map"
-    href="/essentials/navigation"
-  >
-    Organize your docs to help users find what they need and succeed with your product.
+  <Card title="Client Configuration" icon="laptop" href="/client/configuration">
+    Connect to your TUIC server via SOCKS5 or port forwarding
   </Card>
-  <Card
-    title="API documentation"
-    icon="terminal"
-    href="/api-reference/introduction"
-  >
-    Auto-generate API documentation from OpenAPI specifications.
+  <Card title="Configuration Reference" icon="file-code" href="/reference/server-config">
+    Complete reference for all server and client configuration options
   </Card>
-</Columns>
+</CardGroup>
 
-## Create beautiful pages
+## Why TUIC?
 
-Everything you need to create world-class documentation.
+TUIC is engineered for minimal latency and maximum throughput. By building on QUIC, it avoids the TCP head-of-line blocking problem and delivers native 0-RTT connection establishment for both TCP and UDP traffic.
 
-<Columns cols={2}>
-  <Card
-    title="Write with MDX"
-    icon="pen-fancy"
-    href="/essentials/markdown"
-  >
-    Use MDX to style your docs pages.
+<CardGroup cols={2}>
+  <Card title="0-RTT Proxying" icon="bolt">
+    Zero round-trip TCP and UDP proxy with Full Cone NAT for UDP streams
   </Card>
-  <Card
-    title="Code samples"
-    icon="code"
-    href="/essentials/code"
-  >
-    Add sample code to demonstrate how to use your product.
+  <Card title="Automatic TLS" icon="shield-check">
+    Built-in ACME support for Let's Encrypt — including IP address certificates
   </Card>
-  <Card
-    title="Images"
-    icon="image"
-    href="/essentials/images"
-  >
-    Display images and other media.
+  <Card title="Access Control" icon="list-check">
+    Flexible ACL rules with per-rule outbound policies and traffic hijacking
   </Card>
-  <Card
-    title="Reusable snippets"
-    icon="recycle"
-    href="/essentials/reusable-snippets"
-  >
-    Write once and reuse across your docs.
+  <Card title="RESTful API" icon="plug">
+    Monitor traffic, list online users, and kick clients via HTTP API
   </Card>
-</Columns>
+  <Card title="BBR3 Congestion Control" icon="chart-line">
+    Advanced congestion control with AWS-LC-RS crypto for maximum performance
+  </Card>
+  <Card title="Docker Ready" icon="docker">
+    Multi-platform images for linux/amd64 and linux/arm64 on GHCR and Docker Hub
+  </Card>
+</CardGroup>
 
-## Need inspiration?
+## Get started
 
-<Card
-  title="See complete examples"
-  icon="stars"
-  href="https://mintlify.com/customers"
->
-  Browse our showcase of exceptional documentation sites.
-</Card>
+<Steps>
+  <Step title="Install the server">
+    Download a prebuilt binary or install via Cargo, then generate an example config with `tuic-server --init`.
+  </Step>
+  <Step title="Configure TLS and users">
+    Set your hostname, enable ACME or provide certificates, and add user UUIDs with passwords to `[users]`.
+  </Step>
+  <Step title="Start the server">
+    Run `tuic-server -c config.toml` and verify it is listening on your configured port.
+  </Step>
+  <Step title="Connect with the client">
+    Configure `tuic-client` with your server address, UUID, and password. Start it and point your applications at `127.0.0.1:1080` (SOCKS5).
+  </Step>
+</Steps>
+
+<Note>
+  TUIC is a fork of the original [tuic-protocol/tuic](https://github.com/tuic-protocol/tuic) with significant enhancements including ACME support, ACL rules, RESTful API, BBR3 congestion control, and Docker image builds.
+</Note>

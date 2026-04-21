@@ -1,0 +1,414 @@
+---
+title: "tuic-server configuration reference"
+description: "Complete reference for every tuic-server configuration option, organized by TOML section with types, defaults, and descriptions."
+---
+
+The tuic-server configuration file is written in TOML (recommended), JSON5, or YAML. Pass it at startup with `-c PATH` or point to a directory with `-d DIR`. Running `tuic-server --init` writes a fully-annotated `config.toml` to the current directory. All duration values use humantime notation (e.g. `"3s"`, `"30s"`).
+
+## Top-level options
+
+<ParamField path="log_level" type='"trace" | "debug" | "info" | "warn" | "error" | "off"'>
+  Verbosity of structured log output. Default: `"info"`.
+</ParamField>
+
+<ParamField path="server" type="string">
+  Socket address the server binds to. Accepts IPv4, IPv6, or dual-stack notation. Default: `"[::]:8443"`.
+</ParamField>
+
+<ParamField path="data_dir" type="string">
+  Working directory used to resolve relative certificate and key paths. When empty the process current directory is used. Default: `""`.
+</ParamField>
+
+<ParamField path="udp_relay_ipv6" type="boolean">
+  Create dedicated UDP sockets for relaying IPv6 UDP packets. Disable if you do not need IPv6 UDP relay. Default: `true`.
+</ParamField>
+
+<ParamField path="zero_rtt_handshake" type="boolean">
+  Allow clients to use QUIC 0-RTT connection handshake. Reduces latency on reconnect but may be susceptible to replay attacks. Default: `false`.
+</ParamField>
+
+<ParamField path="dual_stack" type="boolean">
+  When `true`, the listening socket accepts both IPv4 and IPv6 connections. Default: `true`.
+</ParamField>
+
+<ParamField path="auth_timeout" type="string (duration)">
+  Maximum time to wait for a client to send its authentication command after connecting. Default: `"3s"`.
+</ParamField>
+
+<ParamField path="task_negotiation_timeout" type="string (duration)">
+  Maximum time allowed for task negotiation after authentication. Default: `"3s"`.
+</ParamField>
+
+<ParamField path="gc_interval" type="string (duration)">
+  How often the garbage collector runs to remove stale UDP packet fragments. Default: `"10s"`.
+</ParamField>
+
+<ParamField path="gc_lifetime" type="string (duration)">
+  Maximum age of a UDP packet fragment before it is discarded. Default: `"30s"`.
+</ParamField>
+
+<ParamField path="max_external_packet_size" type="integer">
+  Maximum UDP payload size (bytes) accepted from outbound sockets. Default: `1500`.
+</ParamField>
+
+<ParamField path="stream_timeout" type="string (duration)">
+  Maximum idle time for TCP and UDP I/O tasks before they are torn down. Default: `"60s"`.
+</ParamField>
+
+---
+
+## \[users\]
+
+The `[users]` table maps UUID strings to plain-text passwords. Any number of users can be defined.
+
+```toml
+[users]
+f0e12827-fe60-458c-8269-a05ccb0ff8da = "password"
+3a9c1234-ab12-34cd-ef56-789012345678 = "another_password"
+```
+
+<ParamField path="<uuid>" type="string" required>
+  UUID key in hyphenated lowercase format. The corresponding string value is the user's password. The server verifies the UUID + password pair during the authentication phase.
+</ParamField>
+
+---
+
+## \[tls\]
+
+TLS is mandatory. You may supply your own certificate files, enable automatic ACME provisioning, or use a self-signed certificate.
+
+<ParamField path="tls.self_sign" type="boolean">
+  Generate and use a self-signed certificate at startup. Clients must add the certificate to their trusted store. Default: `false`.
+</ParamField>
+
+<ParamField path="tls.certificate" type="string (path)">
+  Path to the PEM certificate file. Relative paths are resolved from `data_dir`. When `auto_ssl` is enabled and this is empty, the path is derived automatically as `<data_dir>/<hostname>.cer.pem`. Default: `""`.
+</ParamField>
+
+<ParamField path="tls.private_key" type="string (path)">
+  Path to the PEM private key file. Relative paths are resolved from `data_dir`. When `auto_ssl` is enabled and this is empty, the path is derived automatically as `<data_dir>/<hostname>.key.pem`. Default: `""`.
+</ParamField>
+
+<ParamField path="tls.alpn" type="string[]">
+  ALPN protocol identifiers advertised during the TLS handshake (e.g. `["h3"]`). Default: `[]`.
+</ParamField>
+
+<ParamField path="tls.hostname" type="string">
+  Domain name or IP address used for certificate issuance or self-signed certificate generation. Default: `"localhost"`.
+</ParamField>
+
+<ParamField path="tls.auto_ssl" type="boolean">
+  Enable built-in ACME certificate provisioning via Let's Encrypt. The server handles HTTP-01 challenges automatically; port 80 must be reachable. Certificates are stored in `data_dir` and hot-reloaded without restart. Default: `false`.
+</ParamField>
+
+<ParamField path="tls.acme_email" type="string">
+  Contact email registered with Let's Encrypt. If empty, defaults to `admin@<hostname>`. Default: `""`.
+</ParamField>
+
+<Note>
+  When `auto_ssl = true` and provisioning fails, the server falls back to self-signed certificates if `self_sign = true` is also set.
+</Note>
+
+---
+
+## \[quic\]
+
+QUIC transport layer configuration.
+
+<ParamField path="quic.initial_mtu" type="integer">
+  Initial UDP payload size (bytes) used before MTU discovery completes. Must be at least 1200. Default: `1200`.
+</ParamField>
+
+<ParamField path="quic.min_mtu" type="integer">
+  Minimum UDP payload size guaranteed to be supported by the network. Must be at least 1200 and no greater than `initial_mtu`. Default: `1200`.
+</ParamField>
+
+<ParamField path="quic.gso" type="boolean">
+  Enable Generic Segmentation Offload on platforms that support it. Improves throughput at high packet rates. Default: `true`.
+</ParamField>
+
+<ParamField path="quic.pmtu" type="boolean">
+  Enable Path MTU Discovery to find the largest supported packet size. Default: `true`.
+</ParamField>
+
+<ParamField path="quic.send_window" type="integer">
+  Maximum bytes the local endpoint may have in-flight before waiting for acknowledgements. Default: `16777216` (16 MiB).
+</ParamField>
+
+<ParamField path="quic.receive_window" type="integer">
+  Maximum bytes a remote stream may send without acknowledgement. Default: `8388608` (8 MiB).
+</ParamField>
+
+<ParamField path="quic.max_idle_time" type="string (duration)">
+  Time after which an idle QUIC connection is closed. Default: `"30s"`.
+</ParamField>
+
+### \[quic.congestion_control\]
+
+<ParamField path="quic.congestion_control.controller" type='"bbr" | "bbr3" | "cubic" | "new_reno"'>
+  Congestion control algorithm. `bbr3` uses the BBRv3 algorithm from the patched quinn fork and typically delivers better throughput. Default: `"bbr"`.
+</ParamField>
+
+<ParamField path="quic.congestion_control.initial_window" type="integer">
+  Initial congestion window size in bytes. Default: `1048576` (1 MiB).
+</ParamField>
+
+---
+
+## \[restful\]
+
+Optional RESTful management API. Omit the entire section to disable it.
+
+<ParamField path="restful.addr" type="string">
+  Socket address the RESTful API listens on. Default: `"127.0.0.1:8443"`.
+</ParamField>
+
+<ParamField path="restful.secret" type="string" required>
+  Bearer token required in the `Authorization: Bearer <secret>` header for all API requests.
+</ParamField>
+
+<ParamField path="restful.maximum_clients_per_user" type="integer">
+  Maximum simultaneous connections allowed per UUID. `0` means unlimited. Default: `0`.
+</ParamField>
+
+**Available endpoints:**
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/online` | Count of currently connected clients |
+| `GET` | `/detailed_online` | IP addresses and ports of connected clients |
+| `POST` | `/kick` | Disconnect specified users (clients may reconnect) |
+| `GET` | `/traffic` | Current cumulative traffic statistics |
+| `GET` | `/reset_traffic` | Return and then reset traffic statistics |
+
+<Warning>
+  Traffic statistics are held in memory and are lost when the server restarts.
+</Warning>
+
+---
+
+## \[outbound\]
+
+Controls how the server routes outgoing connections. The `[outbound.default]` rule is used when no ACL rule matches or when an ACL rule names `"default"`. Additional named rules are referenced by ACL rules.
+
+### \[outbound.default\] and \[outbound.\<name\>\]
+
+<ParamField path="type" type='"direct" | "socks5"'>
+  How this outbound routes traffic. `"direct"` opens connections directly from the server; `"socks5"` forwards through a SOCKS5 proxy. Default: `"direct"`.
+</ParamField>
+
+<ParamField path="ip_mode" type='"v4first" | "v6first" | "v4only" | "v6only"'>
+  IP version preference for direct connections. Legacy aliases `prefer_v4`, `prefer_v6`, `only_v4`, `only_v6` are also accepted. Default: `"v4first"`.
+</ParamField>
+
+<ParamField path="bind_ipv4" type="string | string[]">
+  One or more local IPv4 addresses to bind for direct outbound connections. When multiple addresses are given, one is chosen randomly per connection. Only used when `type = "direct"`.
+</ParamField>
+
+<ParamField path="bind_ipv6" type="string | string[]">
+  One or more local IPv6 addresses to bind for direct outbound connections. Only used when `type = "direct"`.
+</ParamField>
+
+<ParamField path="bind_device" type="string">
+  Network interface name (e.g. `"eth0"`) to bind outbound sockets to. Only used when `type = "direct"`.
+</ParamField>
+
+<ParamField path="addr" type="string">
+  SOCKS5 proxy address in `host:port` format. Required when `type = "socks5"`.
+</ParamField>
+
+<ParamField path="username" type="string">
+  Optional SOCKS5 username for proxy authentication. Only used when `type = "socks5"`.
+</ParamField>
+
+<ParamField path="password" type="string">
+  Optional SOCKS5 password for proxy authentication. Only used when `type = "socks5"`.
+</ParamField>
+
+<ParamField path="allow_udp" type="boolean">
+  When `type = "socks5"`, allow UDP traffic to pass through this outbound. UDP is sent directly (UDP-over-SOCKS5 is not implemented). Default: `false`.
+</ParamField>
+
+---
+
+## \[\[acl\]\] / acl multiline
+
+Access Control List rules evaluated in order. The first matching rule wins. Rules can be written as an array of TOML tables or as a multiline string.
+
+### Array-of-tables format
+
+```toml
+[[acl]]
+addr     = "127.0.0.1"
+ports    = "udp/53"
+outbound = "default"
+hijack   = "1.1.1.1"
+```
+
+### Multiline string format
+
+```toml
+acl = '''
+direct localhost tcp/80,tcp/443
+drop   private
+default 8.8.4.4 udp/53 1.1.1.1
+'''
+```
+
+<ParamField path="addr" type="string" required>
+  The address to match. Accepted forms:
+  - IP address: `"8.8.8.8"`
+  - CIDR: `"10.0.0.0/8"`
+  - Domain: `"example.com"`
+  - Wildcard domain: `"*.example.com"`
+  - Special keyword `"localhost"` — matches `127.0.0.1` and `::1`
+  - Special keyword `"private"` — matches RFC 1918 / ULA ranges
+  - Special keyword `"*"` or omit — matches any address
+</ParamField>
+
+<ParamField path="ports" type="string">
+  Comma-separated port specifiers. Each entry may optionally prefix a protocol: `tcp/80`, `udp/53`, `443` (both TCP and UDP), `1000-2000` (range). Omit to match all ports.
+</ParamField>
+
+<ParamField path="outbound" type="string" required>
+  Action or named outbound rule:
+  - `"drop"` — silently refuse the connection (built-in, case-insensitive)
+  - `"default"` — use the `[outbound.default]` rule
+  - Any named outbound key from `[outbound.<name>]` — e.g. `"direct"`, `"through_socks5"`
+</ParamField>
+
+<ParamField path="hijack" type="string">
+  Redirect the connection to a different address instead of the original destination. Useful for DNS hijacking. Only available in array-of-tables format.
+</ParamField>
+
+---
+
+## \[experimental\]
+
+Feature flags that affect default connection handling when no ACL rule matches.
+
+<ParamField path="experimental.drop_loopback" type="boolean">
+  Drop connections targeting loopback addresses (`127.0.0.1`, `::1`) when no explicit ACL rule permits them. Prevents accidental exposure of localhost services. Default: `true`.
+</ParamField>
+
+<ParamField path="experimental.drop_private" type="boolean">
+  Drop connections targeting private/LAN address ranges when no explicit ACL rule permits them. Covered ranges: `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16` (IPv4) and `fc00::/7`, `fe80::/10` (IPv6). Default: `true`.
+</ParamField>
+
+<Warning>
+  Setting either flag to `false` allows clients to reach internal network resources. Only do this if you control who can authenticate.
+</Warning>
+
+---
+
+## Complete example configuration
+
+<CodeGroup>
+```toml config.toml
+# Logging level: trace, debug, info, warn, error, off
+log_level = "info"
+
+# Socket address to listen on
+server = "[::]:443"
+
+# Working directory for tuic-server (used for relative certificate/key paths)
+data_dir = ""
+
+# Create separate UDP sockets for relaying IPv6 UDP packets
+udp_relay_ipv6 = true
+# Enable 0-RTT QUIC handshake (recommended: false for security)
+zero_rtt_handshake = false
+# Set if listening socket should be dual-stack (IPv4/IPv6)
+dual_stack = true
+# How long to wait for client authentication command
+auth_timeout = "3s"
+# Maximum duration for task negotiation
+task_negotiation_timeout = "3s"
+# Interval between UDP packet fragment garbage collection
+gc_interval = "10s"
+# How long to keep UDP packet fragments before dropping
+gc_lifetime = "30s"
+# Maximum packet size received from outbound UDP sockets (bytes)
+max_external_packet_size = 1500
+# How long to preserve TCP and UDP I/O tasks
+stream_timeout = "60s"
+
+# Access Control List (ACL) rules
+
+[[acl]]
+addr     = "127.0.0.1"
+ports    = "udp/53"
+outbound = "default"
+hijack   = "1.1.1.1"
+
+[[acl]]
+addr     = "localhost"
+outbound = "drop"
+
+[[acl]]
+addr     = "private"
+outbound = "drop"
+
+# Multiline string format is also supported:
+# acl = '''
+# direct localhost tcp/80,tcp/443,udp/443
+# drop   localhost
+# drop   private
+# default 8.8.4.4 udp/53 1.1.1.1
+# '''
+
+[users]
+f0e12827-fe60-458c-8269-a05ccb0ff8da = "password"
+
+[tls]
+self_sign   = false
+certificate = ""
+private_key = ""
+alpn        = []
+hostname    = "localhost"
+auto_ssl    = false
+acme_email  = ""
+
+[restful]
+addr                     = "127.0.0.1:8443"
+secret                   = "YOUR_SECRET_HERE"
+maximum_clients_per_user = 0
+
+[quic]
+initial_mtu    = 1200
+min_mtu        = 1200
+gso            = true
+pmtu           = true
+send_window    = 16777216
+receive_window = 8388608
+max_idle_time  = "30s"
+
+[quic.congestion_control]
+controller     = "bbr"
+initial_window = 1048576
+
+[experimental]
+drop_loopback = true
+drop_private  = true
+
+[outbound]
+
+[outbound.default]
+type    = "direct"
+ip_mode = "v4first"
+
+[outbound.prefer_v4]
+type        = "direct"
+ip_mode     = "v4first"
+bind_ipv4   = "1.2.3.4"
+bind_ipv6   = "0:0:0:0:0:ffff:0102:0304"
+bind_device = "eth1234"
+
+[outbound.through_socks5]
+type      = "socks5"
+addr      = "127.0.0.1:1080"
+username  = "optional"
+password  = "optional"
+allow_udp = false
+```
+</CodeGroup>

@@ -1,0 +1,142 @@
+---
+title: "TCP and UDP port forwarding with tuic-client"
+description: "Forward local TCP and UDP ports through the TUIC tunnel to remote hosts, bypassing application-level proxy settings without changing app configuration."
+---
+
+In addition to its SOCKS5 listener, `tuic-client` supports transparent TCP and UDP port forwarding. Each forwarding rule binds a local socket address and relays all traffic arriving on that address to a fixed remote host and port through the TUIC tunnel. This is useful for applications that cannot use a SOCKS5 proxy and for services that require a specific local port.
+
+## How forwarding works
+
+Port forwarding rules run alongside the SOCKS5 listener — they are additive, not a replacement. You can define any number of TCP rules and any number of UDP rules. Each rule is independent: it binds its own local socket and maintains its own connection state.
+
+<Info>
+  Port forwarding tunnels traffic to a single fixed remote target per rule. If you need to proxy arbitrary destinations, use the SOCKS5 listener instead.
+</Info>
+
+## [[local.tcp_forward]] section
+
+Each TCP forwarding rule is a `[[local.tcp_forward]]` table entry. Multiple entries create multiple listeners.
+
+<ParamField path="listen" type="string" required>
+  Local `SocketAddr` to bind the TCP listener on, e.g. `"127.0.0.1:8080"`. The client accepts inbound TCP connections on this address and forwards them through the TUIC tunnel.
+</ParamField>
+
+<ParamField path="remote" type="string" required>
+  Remote target in `hostname:port` format, e.g. `"example.com:80"`. The TUIC server resolves this address and establishes the outbound TCP connection. IPv6 addresses must be bracketed: `"[::1]:80"`.
+</ParamField>
+
+## [[local.udp_forward]] section
+
+Each UDP forwarding rule is a `[[local.udp_forward]]` table entry.
+
+<ParamField path="listen" type="string" required>
+  Local `SocketAddr` to bind the UDP socket on, e.g. `"127.0.0.1:5353"`. The client relays datagrams arriving here to the remote target.
+</ParamField>
+
+<ParamField path="remote" type="string" required>
+  Remote target in `hostname:port` format, e.g. `"8.8.8.8:53"`.
+</ParamField>
+
+<ParamField path="timeout" type="string" default="60s">
+  Idle timeout for UDP session state. A UDP "session" is identified by the source address of each incoming datagram. Sessions inactive for longer than `timeout` are cleaned up. Accepts human-readable durations: `"30s"`, `"2m"`, etc.
+</ParamField>
+
+## Configuration examples
+
+### Single TCP forward
+
+Forward local port 8080 to a remote HTTP server:
+
+```toml config.toml
+[relay]
+server   = "example.com:443"
+uuid     = "00000000-0000-0000-0000-000000000000"
+password = "your_password_here"
+
+[local]
+server = "127.0.0.1:1080"
+
+[[local.tcp_forward]]
+listen = "127.0.0.1:8080"
+remote = "internal.example.com:80"
+```
+
+After starting the client, HTTP requests to `http://127.0.0.1:8080` are forwarded through the TUIC tunnel to `internal.example.com:80`.
+
+### DNS over UDP
+
+Forward local port 5353 to Google's public DNS:
+
+```toml config.toml
+[relay]
+server   = "example.com:443"
+uuid     = "00000000-0000-0000-0000-000000000000"
+password = "your_password_here"
+
+[local]
+server = "127.0.0.1:1080"
+
+[[local.udp_forward]]
+listen  = "127.0.0.1:5353"
+remote  = "8.8.8.8:53"
+timeout = "60s"
+```
+
+Point your DNS resolver at `127.0.0.1:5353` and all queries will be tunneled through TUIC to `8.8.8.8:53`.
+
+### Multiple rules simultaneously
+
+You can mix TCP and UDP rules, and define as many as you need:
+
+```toml config.toml
+[relay]
+server   = "example.com:443"
+uuid     = "00000000-0000-0000-0000-000000000000"
+password = "your_password_here"
+
+[local]
+server = "127.0.0.1:1080"
+
+# Forward HTTP traffic
+[[local.tcp_forward]]
+listen = "127.0.0.1:8080"
+remote = "internal.example.com:80"
+
+# Forward HTTPS traffic
+[[local.tcp_forward]]
+listen = "127.0.0.1:8443"
+remote = "internal.example.com:443"
+
+# Forward DNS queries
+[[local.udp_forward]]
+listen  = "127.0.0.1:5353"
+remote  = "8.8.8.8:53"
+timeout = "60s"
+
+# Forward a game's UDP port with a shorter timeout
+[[local.udp_forward]]
+listen  = "127.0.0.1:27015"
+remote  = "gameserver.example.com:27015"
+timeout = "30s"
+```
+
+<Note>
+  All forwarding rules and the SOCKS5 listener run concurrently. Removing or adding rules requires restarting the client.
+</Note>
+
+## Use cases
+
+<CardGroup cols={2}>
+  <Card title="Access internal services" icon="network-wired">
+    Reach private HTTP APIs, databases, or game servers that are only accessible from the server's network, without configuring each application to use SOCKS5.
+  </Card>
+  <Card title="Bypass proxy-unaware apps" icon="arrow-right-arrow-left">
+    Forward a fixed local port for applications that do not support proxy settings, such as system DNS resolvers or legacy desktop clients.
+  </Card>
+  <Card title="Tunnel DNS" icon="magnifying-glass">
+    Route DNS queries through the TUIC tunnel to a trusted resolver, preventing DNS leaks when applications bypass the SOCKS5 proxy for name resolution.
+  </Card>
+  <Card title="Multi-target forwarding" icon="layer-group">
+    Run multiple rules at the same time to expose several remote services locally, each on its own port, without conflicting with each other.
+  </Card>
+</CardGroup>
